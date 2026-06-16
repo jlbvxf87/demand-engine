@@ -42,6 +42,26 @@ Open http://localhost:3000.
 - **Shell**: `components/shell/AppShell.tsx` — side rail on desktop, bottom tabs
   on mobile. Responsive throughout.
 
+## T2V video handoff
+
+Rebuild produces stills; **Publish** turns a still into video via the separate
+T2V engine:
+
+1. "Render video" on a Publish card calls the `renderVideo` server action.
+2. It composes an on-brand prompt (creative copy + brand voice) and POSTs to
+   `{T2V_ENGINE_URL}/api/jobs/create` (`image-to-video` using the still as
+   `reference_image_url`, `intel_enabled:false`, `webhook_url` = our callback,
+   `metadata.ad_creative_id` for mapping). It stores `t2v_job_id` and sets
+   `video_status='queued'`.
+3. When the render finishes, T2V's `notify` stage POSTs
+   `{ event, job_id, video_url, … }` to `/api/creatives/video-callback`, which
+   writes `video_url` and flips `video_status='ready'`. The card then shows
+   "Video ready".
+
+Note: T2V's webhook only fires on **success**, so a failed render leaves the row
+`queued` (no false "ready"). The T2V app must have its worker + Redis running and
+`KIE_API_KEY` set for real renders; mocks otherwise.
+
 ## Env keys
 
 Required for full live operation (all already exist in the v1 Vercel project):

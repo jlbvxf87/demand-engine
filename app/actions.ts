@@ -151,3 +151,95 @@ export async function synthesizeBrief(searchId: string): Promise<ActionResult> {
   if (r.ok) revalidatePath("/decode");
   return r;
 }
+
+/**
+ * Rebuild → T2V handoff. Submits a render job to the separate T2V engine
+ * (POST {T2V_ENGINE_URL}/api/jobs/create), stores t2v_job_id, flips
+ * video_status to 'queued'. The engine's webhook later fills video_url
+ * via /api/creatives/video-callback.
+ */
+export async function renderVideo(creativeId: string): Promise<ActionResult> {
+  const t2vBase = process.env.T2V_ENGINE_URL;
+  if (!t2vBase) {
+    return { ok: false, error: "T2V_ENGINE_URL not set — add it to enable video render." };
+  }
+
+  try {
+    const sb = getServiceClient();
+    const { data: c } = await sb
+      .from("ad_creatives")
+      .select("id, brand_slug, vertical, hook_text, bridge_text, cta_text, image_url")
+      .eq("id", creativeId)
+      .single();
+    if (!c) return { ok: false, error: "Creative not found" };
+
+    const cr = c as {
+      brand_slug: string | null;
+      vertical: string | null;
+      hook_text: string;
+      bridge_text: string | null;
+      cta_text: string | null;
+      image_url: string | null;
+    };
+
+    // brand voice → on-brand prompt
+    let voice = "";
+    if (cr.brand_slug) {
+      const { data: b } = await sb
+        .from("brands")
+        .select("brand_voice")
+        .eq("slug", cr.brand_slug)
+        .single();
+      voice = (b as { brand_voice?: string } | null)?.brand_voice || "";
+    }
+
+    const prompt = [
+      cr.hook_text,
+      cr.bridge_text,
+      cr.cta_text ? `CTA: ${cr.cta_text}.` : "",
+      voice ? `Brand voice: ${voice}.` : "",
+      "UGC testimonial style, vertical 9:16. Compliant — no therapeutic or guaranteed-outcome claims.",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 2000);
+
+    const hasImage = Boolean(cr.image_url);
+    const body = {
+      prompt,
+      user_id: cr.brand_slug || "demand-engine",
+      provider: "seedance",
+      duration_target: 9,
+      mode: hasImage ? "image-to-video" : "text-to-video",
+      reference_image_url: hasImage ? cr.image_url : null,
+      intel_enabled: false, // our ad-library R&D drives the prompt, not T2V's scraper
+      webhook_url: `${await baseUrl()}/api/creatives/video-callback`,
+      metadata: { ad_creative_id: creativeId, brand_slug: cr.brand_slug },
+    };
+
+    const res = await fetch(`${t2vBase.replace(/\/$/, "")}/api/jobs/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      id?: string;
+      error?: string;
+    };
+    if (!res.ok || !json.id) {
+      return { ok: false, error: json.error || `T2V HTTP ${res.status}` };
+    }
+
+    await sb
+      .from("ad_creatives")
+      .update({ t2v_job_id: json.id, video_status: "queued" })
+      .eq("id", creativeId);
+
+    revalidatePath("/rebuild");
+    revalidatePath("/publish");
+    return { ok: true, data: { job_id: json.id } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Render submit failed" };
+  }
+}

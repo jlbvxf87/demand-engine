@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Download, Upload, FolderInput, RotateCcw, Lock } from "lucide-react";
+import { Play, Download, Upload, FolderInput, RotateCcw, Lock, Clapperboard, Loader2 } from "lucide-react";
 import { ScreenHeader, Card, Badge, EmptyState } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
+import { renderVideo } from "@/app/actions";
 import type { Creative } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
@@ -18,6 +19,20 @@ const TARGETS = [
 export default function PublishClient({ creatives }: { creatives: Creative[] }) {
   const router = useRouter();
   const [target, setTarget] = useState("meta");
+  const [pending, startTransition] = useTransition();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  function render(id: string) {
+    setBusyId(id);
+    setNote(null);
+    startTransition(async () => {
+      const r = await renderVideo(id);
+      setBusyId(null);
+      if (!r.ok) setNote(r.error || "Render failed");
+      else router.refresh();
+    });
+  }
 
   return (
     <div>
@@ -61,13 +76,24 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
                         : `Still · 0:${String(22 + i * 3).padStart(2, "0")} · 9:16`}
                   </p>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
                   {hasVideo ? (
                     <Badge tone="publish">Video ready</Badge>
                   ) : rendering ? (
                     <Badge tone="decode">Rendering</Badge>
                   ) : (
-                    <Badge tone="neutral">Still</Badge>
+                    <button
+                      onClick={() => render(c.id)}
+                      disabled={pending && busyId === c.id}
+                      className="flex items-center gap-1.5 rounded-lg bg-[var(--color-publish-soft)] px-2.5 py-1.5 text-[11.5px] font-bold text-[var(--color-publish)] disabled:opacity-60"
+                    >
+                      {pending && busyId === c.id ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Clapperboard size={12} />
+                      )}
+                      Render video
+                    </button>
                   )}
                   <Badge tone="win">Compliant</Badge>
                 </div>
@@ -75,6 +101,11 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
             );
           })}
         </div>
+      )}
+      {note && (
+        <p className="mt-3 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
+          {note}
+        </p>
       )}
 
       {/* Publish targets */}
