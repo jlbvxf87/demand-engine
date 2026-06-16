@@ -38,18 +38,42 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {creatives.map((c, i) => (
-            <Card key={c.id} className="flex items-center gap-3 p-3">
-              <AdThumb src={c.image_url} name={c.hook_text} size={52} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-bold">{c.hook_text}</p>
-                <p className="text-[12px] text-[var(--color-ink-muted)]">
-                  0:{String(22 + i * 3).padStart(2, "0")} · Vertical 9:16
-                </p>
-              </div>
-              <Badge tone="win">Compliant</Badge>
-            </Card>
-          ))}
+          {creatives.map((c, i) => {
+            const hasVideo = Boolean(c.video_url);
+            const rendering = c.video_status === "queued" || c.video_status === "rendering";
+            return (
+              <Card key={c.id} className="flex items-center gap-3 p-3">
+                <div className="relative shrink-0">
+                  <AdThumb src={c.image_url} name={c.hook_text} size={52} />
+                  {hasVideo && (
+                    <span className="absolute inset-0 grid place-items-center rounded-xl bg-black/35">
+                      <Play size={18} className="text-white" fill="currentColor" />
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[14px] font-bold">{c.hook_text}</p>
+                  <p className="text-[12px] text-[var(--color-ink-muted)]">
+                    {hasVideo
+                      ? "Video · Vertical 9:16"
+                      : rendering
+                        ? "Rendering video…"
+                        : `Still · 0:${String(22 + i * 3).padStart(2, "0")} · 9:16`}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  {hasVideo ? (
+                    <Badge tone="publish">Video ready</Badge>
+                  ) : rendering ? (
+                    <Badge tone="decode">Rendering</Badge>
+                  ) : (
+                    <Badge tone="neutral">Still</Badge>
+                  )}
+                  <Badge tone="win">Compliant</Badge>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 

@@ -254,6 +254,9 @@ export type Creative = {
   cta_text: string | null;
   image_url: string | null;
   image_prompt: string | null;
+  video_url: string | null;
+  video_status: string | null;
+  t2v_job_id: string | null;
   platform: string;
   creative_type: string;
   inspired_by: string | null;
@@ -267,7 +270,7 @@ export async function getGeneratedCreatives(limit = 24): Promise<Creative[]> {
     const { data, error } = await sb
       .from("ad_creatives")
       .select(
-        "id, brand_slug, vertical, hook_type, hook_text, bridge_text, cta_text, image_url, image_prompt, platform, creative_type, inspired_by, created_at"
+        "id, brand_slug, vertical, hook_type, hook_text, bridge_text, cta_text, image_url, image_prompt, video_url, video_status, t2v_job_id, platform, creative_type, inspired_by, created_at"
       )
       .order("created_at", { ascending: false })
       .limit(limit);
@@ -306,14 +309,24 @@ export async function getBrands(): Promise<Brand[]> {
   }
 }
 
-/** Distinct verticals present in the ad data, for filter options. */
+// The `vertical` column is overloaded: pre-crawl it holds the winner badge
+// (dominant/proven/scaling/testing); post-crawl it holds the real health
+// vertical. Only treat known health verticals as real filter options.
+const KNOWN_VERTICALS = new Set(["glp1", "trt", "peptides", "joint_pain"]);
+
+/** Distinct (real) verticals present in the ad data, for filter options. */
 export async function getVerticals(): Promise<string[]> {
   try {
     const sb = getServiceClient();
-    const { data } = await sb.from("spy_ads").select("vertical").not("vertical", "is", null).limit(1000);
+    const { data } = await sb
+      .from("spy_ads")
+      .select("vertical")
+      .not("vertical", "is", null)
+      .limit(1000);
     const set = new Set<string>();
     (data || []).forEach((r: Record<string, unknown>) => {
-      if (r.vertical) set.add(String(r.vertical));
+      const v = r.vertical ? String(r.vertical) : "";
+      if (KNOWN_VERTICALS.has(v)) set.add(v);
     });
     return [...set].sort();
   } catch {

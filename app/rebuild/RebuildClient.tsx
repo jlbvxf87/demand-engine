@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Sparkles, Loader2, Check, ShieldCheck, PenLine } from "lucide-react";
+import { ArrowRight, Sparkles, Loader2, Check, ShieldCheck, PenLine, Play } from "lucide-react";
 import { ScreenHeader, Card, Badge, Tabs, EmptyState } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
-import { generateCopy, generateImage } from "@/app/actions";
+import { generateCreatives } from "@/app/actions";
 import type { AdRow, Brand, Creative } from "@/lib/data";
 
 const ACCENT = "var(--color-rebuild)";
@@ -65,15 +65,13 @@ export default function RebuildClient({
       sessionStorage.setItem(`brand:${ad!.id}`, brandSlug);
     } catch {}
     startTransition(async () => {
-      const copy = await generateCopy(ad!.id, "hooks");
-      if (!copy.ok) {
-        setNote(copy.error || "Copy generation failed");
+      const r = await generateCreatives(ad!.id, brandSlug || null, variants);
+      if (!r.ok) {
+        setNote(r.error || "Generation failed");
         return;
       }
-      const img = await generateImage(ad!.id);
-      if (!img.ok) {
-        setNote(`Copy done; image: ${img.error || "failed"}`);
-      }
+      const d = r.data as { created?: number; image?: boolean } | undefined;
+      if (d && !d.image) setNote(`${d.created} variants saved (image pending — check OpenAI key).`);
       router.refresh();
     });
   }
@@ -165,7 +163,7 @@ export default function RebuildClient({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {creatives.slice(0, 6).map((c) => (
             <Card key={c.id} className="overflow-hidden p-0">
-              <div className="aspect-square w-full bg-[var(--color-surface-2)]">
+              <div className="relative aspect-square w-full bg-[var(--color-surface-2)]">
                 {c.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -177,6 +175,11 @@ export default function RebuildClient({
                   <div className="grid h-full w-full place-items-center text-[var(--color-ink-muted)]">
                     <Sparkles size={20} />
                   </div>
+                )}
+                {c.video_url && (
+                  <span className="absolute bottom-1.5 right-1.5 grid h-6 w-6 place-items-center rounded-full bg-black/55">
+                    <Play size={12} className="text-white" fill="currentColor" />
+                  </span>
                 )}
               </div>
               <div className="p-2.5">
