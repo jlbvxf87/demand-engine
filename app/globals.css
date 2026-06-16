@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Demand Engine 2.0 — design tokens (from the Figma KISS factory board)
+   Per-stage accents: Source=green, Decode=blue, Rebuild=orange, Publish=indigo
+   ────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-canvas: #f3f5ef;        /* warm off-white app background */
+  --color-surface: #ffffff;       /* card background */
+  --color-surface-2: #f7f9f4;     /* subtle inset / filter pills */
+  --color-ink: #0e1b16;           /* primary text (near-black green) */
+  --color-ink-muted: #6b7280;     /* secondary text */
+  --color-line: #e6e9e2;          /* hairline borders */
+
+  /* Stage accents */
+  --color-source: #0e8f61;        /* green  */
+  --color-source-soft: #e3f3ec;
+  --color-decode: #2563eb;        /* blue   */
+  --color-decode-soft: #e6efff;
+  --color-rebuild: #f97316;       /* orange */
+  --color-rebuild-soft: #fdeede;
+  --color-publish: #6366f1;       /* indigo */
+  --color-publish-soft: #ebecfe;
+
+  /* Semantic */
+  --color-win: #0e8f61;
+  --color-win-soft: #e3f3ec;
+  --color-warn: #b45309;
+  --color-warn-soft: #fdeede;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fde8e8;
+
+  --radius-card: 18px;
+  --radius-pill: 999px;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Hide scrollbars on the horizontal pill rows but keep scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Skeleton shimmer for loading states */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-2) 0%,
+    #eef1ea 50%,
+    var(--color-surface-2) 100%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}
