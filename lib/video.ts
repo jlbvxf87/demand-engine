@@ -12,6 +12,15 @@ export const VIDEO_PROVIDERS: { id: VideoProvider; label: string; maxDuration: n
   { id: "runway", label: "Runway Gen-4", maxDuration: 10 },
 ];
 
+/** Allowed clip durations (seconds) per model — drives the duration picker. */
+export const PROVIDER_DURATIONS: Record<VideoProvider, number[]> = {
+  seedance: [4, 5, 8, 10, 12, 15],
+  kling: [5, 10, 15],
+  sora: [10, 15],
+  veo: [5, 8],
+  runway: [5, 10],
+};
+
 const LABELS: Record<VideoProvider, string> = {
   seedance: "Seedance 2.0",
   kling: "Kling 3.0",

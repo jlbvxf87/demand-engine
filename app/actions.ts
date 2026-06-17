@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
+import { buildMasterScript } from "@/lib/storyboard";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Server actions = the factory's "live" buttons. They call the existing,
@@ -271,6 +272,9 @@ export async function pollVideoJobs(): Promise<ActionResult> {
       }
     }
 
+    // When a storyboard's scenes are all done, hand them to the stitch worker.
+    await triggerReadyStoryboards(sb);
+
     if (updated) {
       revalidatePath("/publish");
       revalidatePath("/rebuild");
@@ -278,6 +282,141 @@ export async function pollVideoJobs(): Promise<ActionResult> {
     return { ok: true, data: { pending: rows.length, updated } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Poll failed" };
+  }
+}
+
+type SB = ReturnType<typeof getServiceClient>;
+
+/** Fire the stitch worker for any storyboard whose scene clips are all finished. */
+async function triggerReadyStoryboards(sb: SB): Promise<void> {
+  const worker = process.env.STITCH_WORKER_URL;
+  if (!worker) return; // no worker configured yet — scenes still usable individually
+  const { data: stories } = await sb
+    .from("storyboards")
+    .select("id, clip_count")
+    .eq("status", "generating");
+  for (const s of (stories || []) as { id: string; clip_count: number }[]) {
+    const { data: clips } = await sb
+      .from("ad_creatives")
+      .select("scene_index, video_url, video_status")
+      .eq("storyboard_id", s.id)
+      .order("scene_index", { ascending: true });
+    const rows = (clips || []) as {
+      scene_index: number;
+      video_url: string | null;
+      video_status: string;
+    }[];
+    if (rows.length < s.clip_count) continue;
+    const allDone = rows.every((r) => r.video_status === "ready" || r.video_status === "failed");
+    if (!allDone) continue;
+    const urls = rows.filter((r) => r.video_url).map((r) => r.video_url as string);
+    if (urls.length < 2) {
+      await sb.from("storyboards").update({ status: "failed", final_status: "failed" }).eq("id", s.id);
+      continue;
+    }
+    await sb.from("storyboards").update({ status: "stitching", final_status: "stitching" }).eq("id", s.id);
+    try {
+      await fetch(`${worker.replace(/\/$/, "")}/stitch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          storyboard_id: s.id,
+          clip_urls: urls,
+          callback_url: `${await baseUrl()}/api/storyboards/stitch-callback`,
+        }),
+        cache: "no-store",
+      });
+    } catch {
+      // worker unreachable — revert so we retry next tick
+      await sb.from("storyboards").update({ status: "generating", final_status: "none" }).eq("id", s.id);
+    }
+  }
+}
+
+/**
+ * Multi-scene storyboard: N reference images + a brief → Sonnet master script
+ * → one Kie image-to-video clip per scene. Clips render live in the Studio; when
+ * all finish, the poll loop hands them to the stitch worker for one final video.
+ */
+export async function createStoryboard(input: {
+  imageUrls: string[];
+  prompt: string;
+  provider?: string;
+  durationPerClip?: number;
+}): Promise<ActionResult> {
+  const provider = input.provider ?? "seedance";
+  if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
+  const imgs = (input.imageUrls || []).filter(Boolean);
+  if (imgs.length < 2) return { ok: false, error: "Add at least 2 images (one per scene)" };
+  const prompt = (input.prompt || "").trim();
+  if (!prompt) return { ok: false, error: "A story brief is required" };
+  const durationPerClip = input.durationPerClip ?? 5;
+  const clipCount = imgs.length;
+
+  try {
+    const sb = getServiceClient();
+    const scenes = await buildMasterScript(prompt, provider, clipCount, durationPerClip);
+
+    const { data: story, error: sErr } = await sb
+      .from("storyboards")
+      .insert({
+        prompt,
+        provider,
+        clip_count: clipCount,
+        duration_per_clip: durationPerClip,
+        status: "generating",
+        master_script_json: { scenes },
+        final_status: "none",
+      })
+      .select("id")
+      .single();
+    if (sErr || !story) return { ok: false, error: sErr?.message || "Failed to create storyboard" };
+    const storyId = (story as { id: string }).id;
+
+    let created = 0;
+    for (let i = 0; i < clipCount; i++) {
+      const scene = scenes[i];
+      const { data: row } = await sb
+        .from("ad_creatives")
+        .insert({
+          storyboard_id: storyId,
+          scene_index: i,
+          hook_text: scene.scene_summary,
+          image_prompt: scene.scene_prompt,
+          image_url: imgs[i],
+          hook_type: "scene",
+          platform: "meta",
+          creative_type: "scene",
+          video_status: "rendering",
+          video_provider: provider,
+        })
+        .select("id")
+        .single();
+      const id = (row as { id: string } | null)?.id;
+      if (!id) continue;
+      try {
+        const { taskId } = await submitKieVideo({
+          provider,
+          prompt: scene.scene_prompt,
+          mode: "image-to-video",
+          referenceImageUrls: [imgs[i]],
+          duration: scene.duration || durationPerClip,
+        });
+        await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);
+        created++;
+      } catch {
+        await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", id);
+      }
+    }
+
+    revalidatePath("/publish");
+    if (created === 0) {
+      await sb.from("storyboards").update({ status: "failed" }).eq("id", storyId);
+      return { ok: false, error: "All scenes failed to submit" };
+    }
+    return { ok: true, data: { storyboard_id: storyId, scenes: created } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Storyboard failed" };
   }
 }
 
