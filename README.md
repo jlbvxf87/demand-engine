@@ -42,37 +42,40 @@ Open http://localhost:3000.
 - **Shell**: `components/shell/AppShell.tsx` — side rail on desktop, bottom tabs
   on mobile. Responsive throughout.
 
-## T2V video handoff
+## Video generation (direct kie.ai)
 
-Rebuild produces stills; **Publish** turns a still into video via the separate
-T2V engine:
+**Publish** turns reference images into video via kie.ai directly — no separate
+engine. Two modes:
 
-1. "Render video" on a Publish card calls the `renderVideo` server action.
-2. It composes an on-brand prompt (creative copy + brand voice) and POSTs to
-   `{T2V_ENGINE_URL}/api/jobs/create` (`image-to-video` using the still as
-   `reference_image_url`, `intel_enabled:false`, `webhook_url` = our callback,
-   `metadata.ad_creative_id` for mapping). It stores `t2v_job_id` and sets
-   `video_status='queued'`.
-3. When the render finishes, T2V's `notify` stage POSTs
-   `{ event, job_id, video_url, … }` to `/api/creatives/video-callback`, which
-   writes `video_url` and flips `video_status='ready'`. The card then shows
-   "Video ready".
+- **Replicate** — one reference image + an instruction prompt → one
+  image-to-video clip (`renderVideo` / `replicate` server actions).
+- **Multi-scene** — N reference frames (2/4/6/8) + a brief → Claude Sonnet
+  writes an N-scene JSON master script (`lib/storyboard.ts`) → one Kie
+  image-to-video clip per scene (`createStoryboard`).
 
-Note: T2V's webhook only fires on **success**, so a failed render leaves the row
-`queued` (no false "ready"). The T2V app must have its worker + Redis running and
-`KIE_API_KEY` set for real renders; mocks otherwise.
+kie.ai is poll-based (no webhook), so the Studio UI ticks `pollVideoJobs` every
+few seconds; finished clips flip `video_status='ready'` with their `video_url`.
+`lib/kie.ts` handles all five models (seedance/kling/sora/veo/runway) across
+kie's three endpoint families.
+
+**Stitching (multi-scene only):** when a storyboard's scene clips all finish,
+`pollVideoJobs` POSTs the ordered clip URLs to the **stitch worker**
+(`STITCH_WORKER_URL`, the separate `de-stitch-worker` Railway service — ffmpeg
+crossfade-concat + loudnorm). It uploads the final and POSTs back to
+`/api/storyboards/stitch-callback`, which sets the storyboard's `final_video_url`.
 
 ## Env keys
 
-Required for full live operation (all already exist in the v1 Vercel project):
+Required for full live operation:
 
 - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
-- `ANTHROPIC_API_KEY` — all Claude calls (decode, generate, synthesize)
+- `ANTHROPIC_API_KEY` — all Claude calls (decode, generate, master script)
 - `META_ACCESS_TOKEN` — Source live ad pulls (`/api/spy/search`)
-- `OPENAI_API_KEY` — `/api/spy/generate-image`
+- `OPENAI_API_KEY` — `/api/spy/generate-image` (optional; only for AI stills)
+- `KIE_API_KEY` (+ `KIE_API_BASE_URL`) — all video generation
 - `MACHINE_API_KEY` — enables the factory's server actions
 - `ADMIN_PASSWORD` / `INTERNAL_API_SECRET` — gates `/api/spy/*`
-- `T2V_ENGINE_URL` — Rebuild → video render handoff (separate T2V app)
+- `STITCH_WORKER_URL` (+ optional `STITCH_WEBHOOK_SECRET`) — multi-scene stitching
 
 Reads (real ad images, advertisers, creatives) work with just the Supabase keys.
 Live *actions* need `MACHINE_API_KEY` + the relevant provider key.
