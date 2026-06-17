@@ -33,7 +33,9 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
       return {
         url: `${KIE_BASE}/api/v1/jobs/createTask`,
         body: {
-          model: i2v ? "bytedance/seedance-2-image-to-video" : "bytedance/seedance-2-text-to-video",
+          // Kie uses one unified slug for both t2v + i2v; i2v is selected by
+          // presence of input_urls (not a separate model id).
+          model: "bytedance/seedance-2",
           input: {
             prompt: o.prompt.slice(0, 3000),
             aspect_ratio: "9:16",
