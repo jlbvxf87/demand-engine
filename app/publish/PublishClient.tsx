@@ -19,6 +19,7 @@ import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
 import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
 import { renderVideo, pollVideoJobs } from "@/app/actions";
+import ReplicatePanel from "./ReplicatePanel";
 import type { Creative } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
@@ -92,6 +93,9 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
         badge={creatives.length ? "ready" : "empty"}
         badgeTone={creatives.length ? "publish" : "neutral"}
       />
+
+      {/* Replicate-from-reference */}
+      <ReplicatePanel />
 
       {/* Model picker + render-all */}
       {creatives.length > 0 && (

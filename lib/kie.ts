@@ -19,13 +19,14 @@ type SubmitOpts = {
   provider: VideoProvider;
   prompt: string;
   mode: VideoMode;
-  referenceImageUrl?: string | null;
+  /** Primary reference first, then optional guide images. */
+  referenceImageUrls?: string[] | null;
   duration?: number; // seconds, default 9
 };
 
 function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknown> } {
-  const i2v = o.mode === "image-to-video" && Boolean(o.referenceImageUrl);
-  const ref = o.referenceImageUrl as string;
+  const imgs = (o.referenceImageUrls || []).filter(Boolean);
+  const i2v = o.mode === "image-to-video" && imgs.length > 0;
   const dur = o.duration ?? 9;
 
   switch (o.provider) {
@@ -43,7 +44,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
             resolution: "1080p",
             fixed_lens: false,
             generate_audio: true,
-            ...(i2v ? { input_urls: [ref] } : {}),
+            ...(i2v ? { input_urls: imgs } : {}),
           },
         },
       };
@@ -60,7 +61,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
             mode: "pro",
             multi_shots: false,
             multi_prompt: [],
-            ...(i2v ? { image_urls: [ref] } : {}),
+            ...(i2v ? { image_urls: imgs } : {}),
           },
         },
       };
@@ -77,7 +78,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
             remove_watermark: true,
             sound: true,
             upload_method: "s3",
-            ...(i2v ? { image_urls: [ref] } : {}),
+            ...(i2v ? { image_urls: imgs } : {}),
           },
         },
       };
@@ -89,7 +90,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
               prompt: o.prompt.slice(0, 5000),
               aspect_ratio: "16:9",
               model: "veo3_fast",
-              imageUrls: [ref],
+              imageUrls: imgs,
               generationType: "REFERENCE_2_VIDEO",
             }
           : { prompt: o.prompt.slice(0, 5000), aspect_ratio: "9:16", model: "veo3" },
@@ -102,7 +103,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
           duration: dur <= 7 ? 5 : 10,
           quality: "720p",
           aspectRatio: "9:16",
-          ...(i2v ? { imageUrl: ref } : {}),
+          ...(i2v ? { imageUrl: imgs[0] } : {}),
         },
       };
   }

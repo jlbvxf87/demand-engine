@@ -209,7 +209,7 @@ export async function renderVideo(
       provider,
       prompt,
       mode: hasImage ? "image-to-video" : "text-to-video",
-      referenceImageUrl: cr.image_url,
+      referenceImageUrls: cr.image_url ? [cr.image_url] : null,
       duration: 9,
     });
 
@@ -278,5 +278,91 @@ export async function pollVideoJobs(): Promise<ActionResult> {
     return { ok: true, data: { pending: rows.length, updated } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Poll failed" };
+  }
+}
+
+/** Upload a reference image to storage; returns its public URL for kie to fetch. */
+export async function uploadReference(
+  formData: FormData
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+  try {
+    const file = formData.get("file");
+    if (!(file instanceof File)) return { ok: false, error: "No file provided" };
+    if (file.size > 50 * 1024 * 1024) return { ok: false, error: "File too large (max 50MB)" };
+    const type = file.type || "image/png";
+    const ext = (type.split("/")[1] || "png").replace("jpeg", "jpg");
+    const path = `${crypto.randomUUID()}.${ext}`;
+    const buf = Buffer.from(await file.arrayBuffer());
+    const sb = getServiceClient();
+    const { error } = await sb.storage
+      .from("ad-references")
+      .upload(path, buf, { contentType: type, upsert: false });
+    if (error) return { ok: false, error: error.message };
+    const { data } = sb.storage.from("ad-references").getPublicUrl(path);
+    return { ok: true, url: data.publicUrl };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Upload failed" };
+  }
+}
+
+/**
+ * Replicate-from-reference: a reference image (+ optional guide images) and an
+ * instruction prompt → N image-to-video variations via kie. Each variant is an
+ * ad_creatives row that renders live in the Studio (reference shown as the still
+ * until its video lands).
+ */
+export async function replicate(input: {
+  referenceUrls: string[];
+  prompt: string;
+  provider?: string;
+  count?: number;
+}): Promise<ActionResult> {
+  const provider = input.provider ?? "seedance";
+  if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
+  const refs = (input.referenceUrls || []).filter(Boolean);
+  if (refs.length === 0) return { ok: false, error: "A reference image is required" };
+  const prompt = (input.prompt || "").trim();
+  if (!prompt) return { ok: false, error: "An instruction prompt is required" };
+  const count = Math.max(1, Math.min(6, input.count ?? 3));
+
+  try {
+    const sb = getServiceClient();
+    let created = 0;
+    for (let i = 0; i < count; i++) {
+      const { data: row } = await sb
+        .from("ad_creatives")
+        .insert({
+          hook_text: prompt.slice(0, 200),
+          image_prompt: prompt,
+          image_url: refs[0],
+          hook_type: "replicate",
+          platform: "meta",
+          creative_type: "replicate",
+          video_status: "rendering",
+          video_provider: provider,
+        })
+        .select("id")
+        .single();
+      const id = (row as { id: string } | null)?.id;
+      if (!id) continue;
+      try {
+        const { taskId } = await submitKieVideo({
+          provider,
+          prompt,
+          mode: "image-to-video",
+          referenceImageUrls: refs,
+          duration: 9,
+        });
+        await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);
+        created++;
+      } catch {
+        await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", id);
+      }
+    }
+    revalidatePath("/publish");
+    if (created === 0) return { ok: false, error: "All variants failed to submit" };
+    return { ok: true, data: { created } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Replicate failed" };
   }
 }
