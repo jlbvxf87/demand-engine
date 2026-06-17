@@ -2,9 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Download, Upload, FolderInput, RotateCcw, Lock, Clapperboard, Loader2 } from "lucide-react";
-import { ScreenHeader, Card, Badge, EmptyState } from "@/components/ui";
+import { Play, Download, Upload, FolderInput, RotateCcw, Lock, Clapperboard, Loader2, CheckCircle2 } from "lucide-react";
+import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
+import { verticalLabel } from "@/lib/format";
 import { renderVideo } from "@/app/actions";
 import type { Creative } from "@/lib/data";
 
@@ -19,6 +20,7 @@ const TARGETS = [
 export default function PublishClient({ creatives }: { creatives: Creative[] }) {
   const router = useRouter();
   const [target, setTarget] = useState("meta");
+  const [review, setReview] = useState<Creative | null>(null);
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -58,24 +60,29 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
             const rendering = c.video_status === "queued" || c.video_status === "rendering";
             return (
               <Card key={c.id} className="flex items-center gap-3 p-3">
-                <div className="relative shrink-0">
-                  <AdThumb src={c.image_url} name={c.hook_text} size={52} />
-                  {hasVideo && (
-                    <span className="absolute inset-0 grid place-items-center rounded-xl bg-black/35">
-                      <Play size={18} className="text-white" fill="currentColor" />
-                    </span>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[14px] font-bold">{c.hook_text}</p>
-                  <p className="text-[12px] text-[var(--color-ink-muted)]">
-                    {hasVideo
-                      ? "Video · Vertical 9:16"
-                      : rendering
-                        ? "Rendering video…"
-                        : `Still · 0:${String(22 + i * 3).padStart(2, "0")} · 9:16`}
-                  </p>
-                </div>
+                <button
+                  onClick={() => setReview(c)}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <div className="relative shrink-0">
+                    <AdThumb src={c.image_url} name={c.hook_text} size={52} />
+                    {hasVideo && (
+                      <span className="absolute inset-0 grid place-items-center rounded-xl bg-black/35">
+                        <Play size={18} className="text-white" fill="currentColor" />
+                      </span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-bold">{c.hook_text}</p>
+                    <p className="text-[12px] text-[var(--color-ink-muted)]">
+                      {hasVideo
+                        ? "Video · Vertical 9:16"
+                        : rendering
+                          ? "Rendering video…"
+                          : `Still · 0:${String(22 + i * 3).padStart(2, "0")} · 9:16`}
+                    </p>
+                  </div>
+                </button>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                   {hasVideo ? (
                     <Badge tone="publish">Video ready</Badge>
@@ -186,6 +193,126 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
       >
         <Play size={18} /> Publish {creatives.length || ""} Creatives
       </button>
+
+      {/* ── Creative review ─────────────────────────────────────────────── */}
+      <Modal
+        open={!!review}
+        onClose={() => setReview(null)}
+        accent={ACCENT}
+        title={<span className="truncate">Creative review</span>}
+      >
+        {review && (
+          <div className="flex flex-col gap-4">
+            {/* Visual */}
+            <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-2)]">
+              {review.video_url ? (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <video
+                  src={review.video_url}
+                  controls
+                  className="max-h-[420px] w-full bg-black object-contain"
+                />
+              ) : review.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={review.image_url}
+                  alt={review.hook_text}
+                  className="max-h-[420px] w-full object-contain"
+                />
+              ) : (
+                <div className="grid h-40 place-items-center text-[13px] text-[var(--color-ink-muted)]">
+                  No still generated yet
+                </div>
+              )}
+            </div>
+
+            {/* Compliance + meta chips */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="win">
+                <CheckCircle2 size={12} /> Compliant
+              </Badge>
+              {review.video_url ? (
+                <Badge tone="publish">Video ready</Badge>
+              ) : review.video_status === "queued" || review.video_status === "rendering" ? (
+                <Badge tone="decode">Rendering</Badge>
+              ) : (
+                <Badge tone="neutral">Still</Badge>
+              )}
+              {review.brand_slug && <Badge tone="rebuild">{review.brand_slug}</Badge>}
+              {review.vertical && <Badge tone="neutral">{verticalLabel(review.vertical)}</Badge>}
+            </div>
+
+            {/* Copy blocks */}
+            <div className="flex flex-col gap-2.5">
+              <CopyBlock label="Hook" text={review.hook_text} />
+              {review.bridge_text && <CopyBlock label="Bridge" text={review.bridge_text} />}
+              {review.cta_text && <CopyBlock label="CTA" text={review.cta_text} />}
+            </div>
+
+            {/* Provenance */}
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="Platform" value={review.platform || "meta"} />
+              <Stat label="Type" value={review.creative_type || "composite"} />
+            </div>
+
+            {review.image_prompt && (
+              <div>
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                  Image prompt
+                </p>
+                <p className="rounded-xl bg-[var(--color-surface-2)] px-3.5 py-3 text-[12.5px] leading-relaxed text-[var(--color-ink-muted)]">
+                  {review.image_prompt}
+                </p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex flex-wrap gap-2">
+              {!review.video_url &&
+                review.video_status !== "queued" &&
+                review.video_status !== "rendering" && (
+                  <button
+                    onClick={() => render(review.id)}
+                    disabled={pending && busyId === review.id}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--color-publish-soft)] px-3.5 py-2.5 text-[13px] font-bold text-[var(--color-publish)] disabled:opacity-60"
+                  >
+                    {pending && busyId === review.id ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Clapperboard size={14} />
+                    )}
+                    Render video
+                  </button>
+                )}
+              {(review.image_url || review.video_url) && (
+                <a
+                  href={review.video_url || review.image_url || "#"}
+                  target="_blank"
+                  rel="noreferrer"
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3.5 py-2.5 text-[13px] font-semibold"
+                >
+                  <Download size={14} /> Download
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* Labelled copy block for the review modal. */
+function CopyBlock({ label, text }: { label: string; text: string }) {
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+        {label}
+      </p>
+      <p className="whitespace-pre-wrap rounded-xl bg-[var(--color-surface-2)] px-3.5 py-3 text-[13.5px] font-semibold leading-relaxed">
+        {text}
+      </p>
     </div>
   );
 }

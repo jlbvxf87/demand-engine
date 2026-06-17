@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, type LucideIcon } from "lucide-react";
+import { useEffect } from "react";
+import { ChevronDown, X, type LucideIcon } from "lucide-react";
 
 /* ── Screen header ─────────────────────────────────────────────────────── */
 export function ScreenHeader({
@@ -255,6 +256,87 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
     <h2 className="mb-2.5 mt-6 text-[15px] font-bold tracking-tight">
       {children}
     </h2>
+  );
+}
+
+/* ── Modal / detail sheet ──────────────────────────────────────────────────
+   Bottom-sheet on mobile, centered dialog on desktop. Backdrop + Esc close. */
+export function Modal({
+  open,
+  onClose,
+  title,
+  accent,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title?: React.ReactNode;
+  accent?: string;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+      <div
+        className="absolute inset-0 bg-[rgba(16,21,27,0.45)] backdrop-blur-[2px]"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative z-10 flex max-h-[90vh] w-full flex-col overflow-hidden rounded-t-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[0_-8px_40px_rgba(16,27,22,0.18)] sm:max-h-[88vh] sm:max-w-lg sm:rounded-[var(--radius-card)] sm:shadow-[0_20px_60px_rgba(16,27,22,0.25)]"
+        style={accent ? { borderTop: `3px solid ${accent}` } : undefined}
+      >
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--color-line)] px-4 py-3">
+          <div className="min-w-0 text-[14px] font-bold">{title}</div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 rounded-lg p-1 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-2)]"
+          >
+            <X size={18} />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Stat (label over value) ───────────────────────────────────────────── */
+export function Stat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: React.ReactNode;
+  accent?: string;
+}) {
+  return (
+    <div className="rounded-xl bg-[var(--color-surface-2)] px-3 py-2.5">
+      <p className="text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+        {label}
+      </p>
+      <p
+        className="mt-0.5 text-[16px] font-extrabold tabular-nums"
+        style={accent ? { color: accent } : undefined}
+      >
+        {value}
+      </p>
+    </div>
   );
 }
 

@@ -11,9 +11,11 @@ import {
   Tabs,
   FilterPill,
   EmptyState,
+  Modal,
+  Stat,
 } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
-import { compact, verticalLabel } from "@/lib/format";
+import { compact, money, verticalLabel } from "@/lib/format";
 import { searchAds } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup } from "@/lib/data";
 
@@ -35,6 +37,7 @@ export default function SourceClient({
   const [vertical, setVertical] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<{ id: string; name: string; sub: string } | null>(null);
+  const [detail, setDetail] = useState<AdRow | null>(null);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
@@ -42,6 +45,14 @@ export default function SourceClient({
 
   const adv = useMemo(() => advertisers.filter((a) => vFilter(a.vertical)), [advertisers, vertical]);
   const crv = useMemo(() => creatives.filter((a) => vFilter(a.vertical)), [creatives, vertical]);
+  const byId = useMemo(() => new Map(creatives.map((c) => [c.id, c])), [creatives]);
+
+  /** Open the rich ad viewer when we have the full row; else fall back to select. */
+  function openAd(id: string | null, name: string, sub: string) {
+    const row = id ? byId.get(id) : undefined;
+    if (row) setDetail(row);
+    else setSelected({ id: id || "", name, sub });
+  }
 
   function runSearch() {
     if (!query.trim()) return;
@@ -142,11 +153,11 @@ export default function SourceClient({
                 <button
                   key={a.page_name}
                   onClick={() =>
-                    setSelected({
-                      id: a.topCreativeId || "",
-                      name: a.page_name,
-                      sub: `${a.activeAds} active ads · ${verticalLabel(a.vertical)}`,
-                    })
+                    openAd(
+                      a.topCreativeId,
+                      a.page_name,
+                      `${a.activeAds} active ads · ${verticalLabel(a.vertical)}`
+                    )
                   }
                   className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-[var(--color-line)] px-4 py-3 text-left transition-colors last:border-0"
                   style={{ background: on ? "var(--color-source-soft)" : "transparent" }}
@@ -192,13 +203,7 @@ export default function SourceClient({
                 >
                   <AdThumb src={c.page_screenshot_url} name={c.page_name} size={56} />
                   <button
-                    onClick={() =>
-                      setSelected({
-                        id: c.id,
-                        name: c.ad_title || c.page_headline || c.page_name || "Untitled",
-                        sub: `${c.page_name} · ${c.days_running}d running`,
-                      })
-                    }
+                    onClick={() => setDetail(c)}
                     className="min-w-0 flex-1 text-left"
                   >
                     <p className="truncate text-[14px] font-bold">
@@ -286,6 +291,133 @@ export default function SourceClient({
           </button>
         </Card>
       )}
+
+      {/* ── Ad viewer ───────────────────────────────────────────────────── */}
+      <Modal
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        accent={ACCENT}
+        title={
+          <span className="flex items-center gap-2">
+            <span className="truncate">{detail?.page_name || "Ad detail"}</span>
+            <WinnerBadge badge={detail?.badge} />
+          </span>
+        }
+      >
+        {detail && (
+          <div className="flex flex-col gap-4">
+            {/* Creative image */}
+            <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-2)]">
+              {detail.page_screenshot_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={detail.page_screenshot_url}
+                  alt={detail.page_name || "ad creative"}
+                  className="max-h-[340px] w-full object-cover object-top"
+                />
+              ) : (
+                <div className="grid h-40 place-items-center text-[13px] text-[var(--color-ink-muted)]">
+                  No landing-page snapshot captured yet
+                </div>
+              )}
+            </div>
+
+            {/* Headline */}
+            <div>
+              <p className="text-[17px] font-extrabold leading-snug">
+                {detail.ad_title || detail.page_headline || "Untitled creative"}
+              </p>
+              <p className="mt-0.5 text-[12.5px] text-[var(--color-ink-muted)]">
+                {detail.page_name} · running {detail.days_running}d ·{" "}
+                {verticalLabel(detail.vertical)}
+              </p>
+            </div>
+
+            {/* Metrics */}
+            <div className="grid grid-cols-4 gap-2">
+              <Stat label="Winner" value={Math.round(detail.winner_score)} accent={ACCENT} />
+              <Stat label="Days" value={detail.days_running} />
+              <Stat label="Spend" value={money(detail.spend_lower, detail.spend_upper)} />
+              <Stat
+                label="Impr."
+                value={compact(
+                  ((detail.impressions_lower ?? 0) + (detail.impressions_upper ?? 0)) / 2 || null
+                )}
+              />
+            </div>
+
+            {/* Ad copy */}
+            {detail.ad_body && (
+              <div>
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                  Ad copy
+                </p>
+                <p className="whitespace-pre-wrap rounded-xl bg-[var(--color-surface-2)] px-3.5 py-3 text-[13.5px] leading-relaxed">
+                  {detail.ad_body}
+                </p>
+              </div>
+            )}
+
+            {/* Landing intel (post-crawl) */}
+            {(detail.page_offer || detail.page_cta || detail.page_pricing) && (
+              <div className="flex flex-col gap-1.5 rounded-xl border border-[var(--color-line)] px-3.5 py-3 text-[13px]">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                  Landing intel
+                </p>
+                {detail.page_offer && (
+                  <p>
+                    <span className="font-semibold">Offer:</span> {detail.page_offer}
+                  </p>
+                )}
+                {detail.page_cta && (
+                  <p>
+                    <span className="font-semibold">CTA:</span> {detail.page_cta}
+                  </p>
+                )}
+                {detail.page_pricing && (
+                  <p>
+                    <span className="font-semibold">Pricing:</span> {detail.page_pricing}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* External links */}
+            <div className="flex flex-wrap gap-2">
+              {detail.ad_snapshot_url && (
+                <a
+                  href={`/api/spy/snapshot?url=${encodeURIComponent(detail.ad_snapshot_url)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
+                >
+                  <ExternalLink size={14} /> View original on Meta
+                </a>
+              )}
+              {detail.destination_url && (
+                <a
+                  href={detail.destination_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
+                >
+                  <ExternalLink size={14} /> Destination page
+                </a>
+              )}
+            </div>
+
+            {/* Primary CTA */}
+            <button
+              onClick={() => toDecode(detail.id)}
+              className="mt-1 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white active:scale-[0.99]"
+              style={{ background: ACCENT }}
+            >
+              Send Winner to Decode
+              <ArrowRight size={18} strokeWidth={2.4} />
+            </button>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
