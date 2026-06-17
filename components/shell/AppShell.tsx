@@ -78,7 +78,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-4 md:max-w-3xl md:px-8 md:pb-12 md:pt-8">
+        <main
+          key={pathname}
+          className="de-in mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-5 md:max-w-3xl md:px-8 md:pb-12 md:pt-8"
+        >
           {children}
         </main>
       </div>
@@ -93,10 +96,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               key={item.stage}
               href={item.href}
               className="flex flex-1 flex-col items-center gap-1 py-1"
-              style={{ color: active ? item.accent : "var(--color-ink-muted)" }}
             >
-              <Icon size={21} strokeWidth={active ? 2.5 : 2} />
-              <span className="text-[10.5px] font-semibold">{item.label}</span>
+              <span
+                className="grid h-8 w-[52px] place-items-center rounded-full transition-colors duration-200"
+                style={{
+                  background: active ? "var(--color-accent-soft)" : "transparent",
+                  color: active ? item.accent : "var(--color-ink-muted)",
+                }}
+              >
+                <Icon size={20} strokeWidth={active ? 2.5 : 2} />
+              </span>
+              <span
+                className="text-[10px] font-semibold"
+                style={{ color: active ? item.accent : "var(--color-ink-muted)" }}
+              >
+                {item.label}
+              </span>
             </Link>
           );
         })}

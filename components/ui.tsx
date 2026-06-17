@@ -53,8 +53,10 @@ export function Card({
   return (
     <As
       onClick={onClick}
-      className={`w-full rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] text-left shadow-[0_1px_2px_rgba(16,27,22,0.04)] ${
-        onClick ? "cursor-pointer transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]" : ""
+      className={`w-full rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] text-left shadow-[0_1px_2px_rgba(16,21,27,0.03),0_10px_28px_-16px_rgba(16,21,27,0.12)] ${
+        onClick
+          ? "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(16,21,27,0.04),0_18px_40px_-20px_rgba(16,21,27,0.20)]"
+          : ""
       } ${className}`}
       style={accent ? { borderLeft: `3px solid ${accent}` } : undefined}
     >
@@ -139,17 +141,17 @@ export function Button({
   type?: "button" | "submit";
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed";
   const style =
     variant === "primary"
-      ? { background: accent, color: "#fff" }
+      ? { background: accent, color: "#fff", boxShadow: "0 6px 18px -6px rgba(23,46,215,0.45)" }
       : { background: "transparent", color: accent, border: `1.5px solid ${accent}` };
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`${base} ${full ? "w-full" : ""} active:scale-[0.99]`}
+      className={`${base} ${full ? "w-full" : ""} active:scale-[0.98]`}
       style={style}
     >
       {Icon && <Icon size={18} strokeWidth={2.4} />}
@@ -178,11 +180,12 @@ export function Tabs({
           <button
             key={t.id}
             onClick={() => onChange(t.id)}
-            className="shrink-0 rounded-[var(--radius-pill)] border px-4 py-2 text-[13.5px] font-semibold transition-colors"
+            className="shrink-0 rounded-[var(--radius-pill)] border px-4 py-2 text-[13.5px] font-semibold transition-all duration-150 active:scale-[0.97]"
             style={{
               background: on ? accent : "var(--color-surface)",
               color: on ? "#fff" : "var(--color-ink-muted)",
               borderColor: on ? accent : "var(--color-line)",
+              boxShadow: on ? "0 4px 12px -4px rgba(23,46,215,0.40)" : "none",
             }}
           >
             {t.label}
