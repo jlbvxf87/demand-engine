@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
+import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Server actions = the factory's "live" buttons. They call the existing,
@@ -153,29 +154,29 @@ export async function synthesizeBrief(searchId: string): Promise<ActionResult> {
 }
 
 /**
- * Rebuild → T2V handoff. Submits a render job to the separate T2V engine
- * (POST {T2V_ENGINE_URL}/api/jobs/create), stores t2v_job_id, flips
- * video_status to 'queued'. The engine's webhook later fills video_url
- * via /api/creatives/video-callback.
+ * Rebuild/Publish → video render, direct to kie.ai (no separate engine).
+ * Submits the chosen model's job, stores the kie taskId + provider, flips
+ * video_status to 'rendering'. kie is poll-based, so pollVideoJobs() (driven
+ * by the Studio UI) later fills video_url.
  */
-export async function renderVideo(creativeId: string): Promise<ActionResult> {
-  const t2vBase = process.env.T2V_ENGINE_URL;
-  if (!t2vBase) {
-    return { ok: false, error: "T2V_ENGINE_URL not set — add it to enable video render." };
+export async function renderVideo(
+  creativeId: string,
+  provider = "seedance"
+): Promise<ActionResult> {
+  if (!isVideoProvider(provider)) {
+    return { ok: false, error: `Unknown model: ${provider}` };
   }
-
   try {
     const sb = getServiceClient();
     const { data: c } = await sb
       .from("ad_creatives")
-      .select("id, brand_slug, vertical, hook_text, bridge_text, cta_text, image_url")
+      .select("id, brand_slug, hook_text, bridge_text, cta_text, image_url")
       .eq("id", creativeId)
       .single();
     if (!c) return { ok: false, error: "Creative not found" };
 
     const cr = c as {
       brand_slug: string | null;
-      vertical: string | null;
       hook_text: string;
       bridge_text: string | null;
       cta_text: string | null;
@@ -201,45 +202,81 @@ export async function renderVideo(creativeId: string): Promise<ActionResult> {
       "UGC testimonial style, vertical 9:16. Compliant — no therapeutic or guaranteed-outcome claims.",
     ]
       .filter(Boolean)
-      .join(" ")
-      .slice(0, 2000);
+      .join(" ");
 
     const hasImage = Boolean(cr.image_url);
-    const body = {
+    const { taskId } = await submitKieVideo({
+      provider,
       prompt,
-      user_id: cr.brand_slug || "demand-engine",
-      provider: "seedance",
-      duration_target: 9,
       mode: hasImage ? "image-to-video" : "text-to-video",
-      reference_image_url: hasImage ? cr.image_url : null,
-      intel_enabled: false, // our ad-library R&D drives the prompt, not T2V's scraper
-      webhook_url: `${await baseUrl()}/api/creatives/video-callback`,
-      metadata: { ad_creative_id: creativeId, brand_slug: cr.brand_slug },
-    };
-
-    const res = await fetch(`${t2vBase.replace(/\/$/, "")}/api/jobs/create`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      cache: "no-store",
+      referenceImageUrl: cr.image_url,
+      duration: 9,
     });
-    const json = (await res.json().catch(() => ({}))) as {
-      id?: string;
-      error?: string;
-    };
-    if (!res.ok || !json.id) {
-      return { ok: false, error: json.error || `T2V HTTP ${res.status}` };
-    }
 
     await sb
       .from("ad_creatives")
-      .update({ t2v_job_id: json.id, video_status: "queued" })
+      .update({
+        t2v_job_id: taskId,
+        video_provider: provider,
+        video_status: "rendering",
+        video_url: null,
+      })
       .eq("id", creativeId);
 
     revalidatePath("/rebuild");
     revalidatePath("/publish");
-    return { ok: true, data: { job_id: json.id } };
+    return { ok: true, data: { task_id: taskId, provider } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Render submit failed" };
+  }
+}
+
+/**
+ * Poll every in-progress kie job and persist results. Called on an interval by
+ * the Studio while any creative is rendering. Returns how many flipped state.
+ */
+export async function pollVideoJobs(): Promise<ActionResult> {
+  try {
+    const sb = getServiceClient();
+    const { data } = await sb
+      .from("ad_creatives")
+      .select("id, t2v_job_id, video_provider, video_status")
+      .in("video_status", ["queued", "rendering"])
+      .not("t2v_job_id", "is", null);
+
+    const rows = (data || []) as {
+      id: string;
+      t2v_job_id: string;
+      video_provider: string | null;
+      video_status: string;
+    }[];
+
+    let updated = 0;
+    for (const row of rows) {
+      if (!row.video_provider || !isVideoProvider(row.video_provider)) continue;
+      try {
+        const r = await pollKieVideo(row.video_provider, row.t2v_job_id);
+        if (r.state === "completed" && r.videoUrl) {
+          await sb
+            .from("ad_creatives")
+            .update({ video_url: r.videoUrl, video_status: "ready" })
+            .eq("id", row.id);
+          updated++;
+        } else if (r.state === "failed") {
+          await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", row.id);
+          updated++;
+        }
+      } catch {
+        // transient — leave it queued, retry next tick
+      }
+    }
+
+    if (updated) {
+      revalidatePath("/publish");
+      revalidatePath("/rebuild");
+    }
+    return { ok: true, data: { pending: rows.length, updated } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Poll failed" };
   }
 }

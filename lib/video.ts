@@ -1,0 +1,29 @@
+/* Client-safe video-model constants (no secrets, no server-only import) so the
+   Studio UI and the server-only kie client can share one source of truth. */
+
+export type VideoProvider = "seedance" | "kling" | "sora" | "veo" | "runway";
+export type VideoMode = "text-to-video" | "image-to-video";
+
+export const VIDEO_PROVIDERS: { id: VideoProvider; label: string; maxDuration: number }[] = [
+  { id: "seedance", label: "Seedance 2.0", maxDuration: 15 },
+  { id: "kling", label: "Kling 3.0", maxDuration: 15 },
+  { id: "sora", label: "Sora 2", maxDuration: 15 },
+  { id: "veo", label: "Veo 3.1", maxDuration: 8 },
+  { id: "runway", label: "Runway Gen-4", maxDuration: 10 },
+];
+
+const LABELS: Record<VideoProvider, string> = {
+  seedance: "Seedance 2.0",
+  kling: "Kling 3.0",
+  sora: "Sora 2",
+  veo: "Veo 3.1",
+  runway: "Runway Gen-4",
+};
+
+export function providerLabel(p: string | null | undefined): string {
+  return (p && LABELS[p as VideoProvider]) || "—";
+}
+
+export function isVideoProvider(p: string): p is VideoProvider {
+  return p === "seedance" || p === "kling" || p === "sora" || p === "veo" || p === "runway";
+}

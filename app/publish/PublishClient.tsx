@@ -1,12 +1,24 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Download, Upload, FolderInput, RotateCcw, Lock, Clapperboard, Loader2, CheckCircle2 } from "lucide-react";
+import {
+  Play,
+  Download,
+  Upload,
+  FolderInput,
+  RotateCcw,
+  Lock,
+  Clapperboard,
+  Loader2,
+  CheckCircle2,
+  Film,
+} from "lucide-react";
 import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
-import { renderVideo } from "@/app/actions";
+import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
+import { renderVideo, pollVideoJobs } from "@/app/actions";
 import type { Creative } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
@@ -17,22 +29,58 @@ const TARGETS = [
   { id: "download", label: "Download Files", icon: Download },
 ];
 
+function isRendering(c: Creative) {
+  return c.video_status === "queued" || c.video_status === "rendering";
+}
+
 export default function PublishClient({ creatives }: { creatives: Creative[] }) {
   const router = useRouter();
   const [target, setTarget] = useState("meta");
+  const [model, setModel] = useState<VideoProvider>("seedance");
   const [review, setReview] = useState<Creative | null>(null);
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  function render(id: string) {
+  const anyRendering = creatives.some(isRendering);
+  const stills = creatives.filter((c) => !c.video_url && !isRendering(c));
+
+  // Drive kie polling from the client while anything is rendering.
+  useEffect(() => {
+    if (!anyRendering) return;
+    let active = true;
+    const tick = async () => {
+      const r = await pollVideoJobs();
+      if (active && r.ok && (r.data as { updated?: number } | undefined)?.updated) {
+        router.refresh();
+      }
+    };
+    const iv = setInterval(tick, 6000);
+    return () => {
+      active = false;
+      clearInterval(iv);
+    };
+  }, [anyRendering, router]);
+
+  function render(id: string, provider: VideoProvider) {
     setBusyId(id);
     setNote(null);
     startTransition(async () => {
-      const r = await renderVideo(id);
+      const r = await renderVideo(id, provider);
       setBusyId(null);
       if (!r.ok) setNote(r.error || "Render failed");
       else router.refresh();
+    });
+  }
+
+  function renderAll() {
+    if (!stills.length) return;
+    setNote(null);
+    startTransition(async () => {
+      for (const c of stills) {
+        await renderVideo(c.id, model);
+      }
+      router.refresh();
     });
   }
 
@@ -40,13 +88,44 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
     <div>
       <ScreenHeader
         title="Publish"
-        subtitle="Export, test, capture results, rank winners."
+        subtitle="Generated creatives — render to video, review, publish."
         badge={creatives.length ? "ready" : "empty"}
         badgeTone={creatives.length ? "publish" : "neutral"}
       />
 
-      {/* Ready to test */}
-      <p className="mb-2 text-[15px] font-bold">Ready to Test</p>
+      {/* Model picker + render-all */}
+      {creatives.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-[13px]">
+            <Film size={15} className="text-[var(--color-ink-muted)]" />
+            <span className="font-semibold text-[var(--color-ink-muted)]">Model</span>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value as VideoProvider)}
+              className="bg-transparent text-[13px] font-bold outline-none"
+            >
+              {VIDEO_PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {stills.length > 0 && (
+            <button
+              onClick={renderAll}
+              disabled={pending}
+              className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-bold text-white disabled:opacity-50"
+              style={{ background: ACCENT }}
+            >
+              {pending ? <Loader2 size={14} className="animate-spin" /> : <Clapperboard size={14} />}
+              Render {stills.length} still{stills.length > 1 ? "s" : ""}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Reel grid */}
       {creatives.length === 0 ? (
         <EmptyState
           icon={Play}
@@ -54,61 +133,13 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
           hint="Generate creatives in Rebuild, then they queue here."
         />
       ) : (
-        <div className="flex flex-col gap-3">
-          {creatives.map((c, i) => {
-            const hasVideo = Boolean(c.video_url);
-            const rendering = c.video_status === "queued" || c.video_status === "rendering";
-            return (
-              <Card key={c.id} className="flex items-center gap-3 p-3">
-                <button
-                  onClick={() => setReview(c)}
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                >
-                  <div className="relative shrink-0">
-                    <AdThumb src={c.image_url} name={c.hook_text} size={52} />
-                    {hasVideo && (
-                      <span className="absolute inset-0 grid place-items-center rounded-xl bg-black/35">
-                        <Play size={18} className="text-white" fill="currentColor" />
-                      </span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[14px] font-bold">{c.hook_text}</p>
-                    <p className="text-[12px] text-[var(--color-ink-muted)]">
-                      {hasVideo
-                        ? "Video · Vertical 9:16"
-                        : rendering
-                          ? "Rendering video…"
-                          : `Still · 0:${String(22 + i * 3).padStart(2, "0")} · 9:16`}
-                    </p>
-                  </div>
-                </button>
-                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  {hasVideo ? (
-                    <Badge tone="publish">Video ready</Badge>
-                  ) : rendering ? (
-                    <Badge tone="decode">Rendering</Badge>
-                  ) : (
-                    <button
-                      onClick={() => render(c.id)}
-                      disabled={pending && busyId === c.id}
-                      className="flex items-center gap-1.5 rounded-lg bg-[var(--color-publish-soft)] px-2.5 py-1.5 text-[11.5px] font-bold text-[var(--color-publish)] disabled:opacity-60"
-                    >
-                      {pending && busyId === c.id ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <Clapperboard size={12} />
-                      )}
-                      Render video
-                    </button>
-                  )}
-                  <Badge tone="win">Compliant</Badge>
-                </div>
-              </Card>
-            );
-          })}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {creatives.map((c) => (
+            <ReelTile key={c.id} c={c} onClick={() => setReview(c)} />
+          ))}
         </div>
       )}
+
       {note && (
         <p className="mt-3 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
           {note}
@@ -116,7 +147,7 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
       )}
 
       {/* Publish targets */}
-      <p className="mb-2 mt-6 text-[15px] font-bold">Publish To</p>
+      <p className="mb-2 mt-7 text-[15px] font-bold">Publish To</p>
       <div className="flex flex-col gap-2.5">
         {TARGETS.map((t) => {
           const on = t.id === target;
@@ -145,7 +176,7 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
         })}
       </div>
 
-      {/* Run performance (needs Meta Marketing API) */}
+      {/* Run performance */}
       <p className="mb-2 mt-6 text-[15px] font-bold">Run Performance</p>
       <Card className="p-4">
         <div className="grid grid-cols-4 gap-2">
@@ -204,37 +235,42 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
         {review && (
           <div className="flex flex-col gap-4">
             {/* Visual */}
-            <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-2)]">
+            <div className="mx-auto w-full max-w-[300px] overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[#10151B]">
               {review.video_url ? (
                 // eslint-disable-next-line jsx-a11y/media-has-caption
                 <video
                   src={review.video_url}
                   controls
-                  className="max-h-[420px] w-full bg-black object-contain"
+                  autoPlay
+                  loop
+                  playsInline
+                  className="aspect-[9/16] w-full bg-black object-contain"
                 />
               ) : review.image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={review.image_url}
                   alt={review.hook_text}
-                  className="max-h-[420px] w-full object-contain"
+                  className="aspect-[9/16] w-full object-cover"
                 />
               ) : (
-                <div className="grid h-40 place-items-center text-[13px] text-[var(--color-ink-muted)]">
-                  No still generated yet
+                <div className="grid aspect-[9/16] place-items-center text-[13px] text-white/60">
+                  {isRendering(review) ? "Rendering…" : "No still generated yet"}
                 </div>
               )}
             </div>
 
-            {/* Compliance + meta chips */}
+            {/* Status + meta chips */}
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="win">
                 <CheckCircle2 size={12} /> Compliant
               </Badge>
               {review.video_url ? (
-                <Badge tone="publish">Video ready</Badge>
-              ) : review.video_status === "queued" || review.video_status === "rendering" ? (
-                <Badge tone="decode">Rendering</Badge>
+                <Badge tone="publish">Video · {providerLabel(review.video_provider)}</Badge>
+              ) : isRendering(review) ? (
+                <Badge tone="decode">Rendering · {providerLabel(review.video_provider)}</Badge>
+              ) : review.video_status === "failed" ? (
+                <Badge tone="danger">Render failed</Badge>
               ) : (
                 <Badge tone="neutral">Still</Badge>
               )}
@@ -249,12 +285,6 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
               {review.cta_text && <CopyBlock label="CTA" text={review.cta_text} />}
             </div>
 
-            {/* Provenance */}
-            <div className="grid grid-cols-2 gap-2">
-              <Stat label="Platform" value={review.platform || "meta"} />
-              <Stat label="Type" value={review.creative_type || "composite"} />
-            </div>
-
             {review.image_prompt && (
               <div>
                 <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
@@ -267,23 +297,35 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
             )}
 
             {/* Actions */}
-            <div className="flex flex-wrap gap-2">
-              {!review.video_url &&
-                review.video_status !== "queued" &&
-                review.video_status !== "rendering" && (
-                  <button
-                    onClick={() => render(review.id)}
-                    disabled={pending && busyId === review.id}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--color-publish-soft)] px-3.5 py-2.5 text-[13px] font-bold text-[var(--color-publish)] disabled:opacity-60"
+            <div className="flex flex-wrap items-center gap-2">
+              {!review.video_url && (
+                <>
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value as VideoProvider)}
+                    className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2.5 text-[13px] font-bold outline-none"
                   >
-                    {pending && busyId === review.id ? (
+                    {VIDEO_PROVIDERS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => render(review.id, model)}
+                    disabled={(pending && busyId === review.id) || isRendering(review)}
+                    className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[13px] font-bold text-white disabled:opacity-60"
+                    style={{ background: ACCENT }}
+                  >
+                    {(pending && busyId === review.id) || isRendering(review) ? (
                       <Loader2 size={14} className="animate-spin" />
                     ) : (
                       <Clapperboard size={14} />
                     )}
-                    Render video
+                    {isRendering(review) ? "Rendering…" : "Render video"}
                   </button>
-                )}
+                </>
+              )}
               {(review.image_url || review.video_url) && (
                 <a
                   href={review.video_url || review.image_url || "#"}
@@ -300,6 +342,87 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
         )}
       </Modal>
     </div>
+  );
+}
+
+/* One vertical reel tile in the Studio grid. */
+function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
+  const rendering = isRendering(c);
+  return (
+    <button
+      onClick={onClick}
+      className="group relative aspect-[9/16] overflow-hidden rounded-xl bg-[#10151B] text-left"
+    >
+      {c.video_url ? (
+        // eslint-disable-next-line jsx-a11y/media-has-caption
+        <video
+          src={`${c.video_url}#t=0.1`}
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+          onMouseLeave={(e) => {
+            e.currentTarget.pause();
+            e.currentTarget.currentTime = 0;
+          }}
+          className="h-full w-full object-cover"
+        />
+      ) : c.image_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={c.image_url} alt={c.hook_text} className="h-full w-full object-cover" />
+      ) : (
+        <div className="grid h-full w-full place-items-center p-3">
+          <AdThumb src={null} name={c.hook_text} size={44} />
+        </div>
+      )}
+
+      {/* Top badges */}
+      <div className="pointer-events-none absolute inset-x-2 top-2 flex items-start justify-between gap-1">
+        <span
+          className="rounded px-1.5 py-0.5 text-[9px] font-bold"
+          style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}
+        >
+          {(c.video_provider && providerLabel(c.video_provider)) ||
+            (c.video_url ? "Video" : "Still")}
+        </span>
+        {rendering && (
+          <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold" style={{ background: "rgba(23,46,215,0.85)", color: "#fff" }}>
+            <Loader2 size={9} className="animate-spin" /> Rendering
+          </span>
+        )}
+        {c.video_status === "failed" && (
+          <span className="rounded px-1.5 py-0.5 text-[9px] font-bold" style={{ background: "rgba(220,38,38,0.85)", color: "#fff" }}>
+            Failed
+          </span>
+        )}
+        {c.video_url && (
+          <span className="rounded px-1.5 py-0.5 text-[9px] font-bold" style={{ background: "rgba(240,255,65,0.9)", color: "#10151B" }}>
+            Video
+          </span>
+        )}
+      </div>
+
+      {/* Rendering shimmer */}
+      {rendering && !c.image_url && (
+        <div className="absolute inset-0 grid place-items-center">
+          <Loader2 size={22} className="animate-spin text-white/70" />
+        </div>
+      )}
+
+      {/* Hover overlay */}
+      <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/85 via-black/10 to-transparent p-2.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+        {c.video_url && (
+          <span className="absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[var(--color-publish)]">
+            <Play size={18} className="text-white" fill="currentColor" />
+          </span>
+        )}
+        <p className="line-clamp-2 text-[11.5px] font-bold leading-snug text-white">{c.hook_text}</p>
+        <p className="mt-0.5 text-[10px] text-white/70">
+          {c.video_provider ? providerLabel(c.video_provider) : c.brand_slug || "draft"}
+        </p>
+      </div>
+    </button>
   );
 }
 
