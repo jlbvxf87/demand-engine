@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Sparkles, Loader2, Check, ShieldCheck, PenLine, Play } from "lucide-react";
+import { ArrowRight, Sparkles, Loader2, Check, ShieldCheck, Play } from "lucide-react";
 import { ScreenHeader, Card, Badge, Tabs, EmptyState } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
-import { generateCreatives } from "@/app/actions";
+import { generateCreatives, generateFromBrief } from "@/app/actions";
 import type { AdRow, Brand, Creative } from "@/lib/data";
 
 const ACCENT = "var(--color-rebuild)";
@@ -40,18 +40,132 @@ export default function RebuildClient({
         const b = sessionStorage.getItem(`brand:${ad.id}`);
         if (b) setBrandSlug(b);
       } catch {}
+    } else {
+      try {
+        const s = sessionStorage.getItem("brief:scratch");
+        if (s) setBrief(s);
+      } catch {}
     }
   }, [ad]);
+
+  function generateScratch() {
+    if (!brief.trim()) {
+      setNote("Write a brief first");
+      return;
+    }
+    setNote(null);
+    startTransition(async () => {
+      const r = await generateFromBrief({ brief, brandSlug: brandSlug || null, variants });
+      if (!r.ok) {
+        setNote(r.error || "Generation failed");
+        return;
+      }
+      router.refresh();
+    });
+  }
 
   if (!ad) {
     return (
       <div>
-        <ScreenHeader title="Rebuild" subtitle="Generate new on-brand creative from the brief." />
-        <EmptyState
-          icon={PenLine}
-          title="No brief selected"
-          hint="Decode a winning ad first, then rebuild it here."
+        <ScreenHeader
+          title="Rebuild"
+          subtitle="Write a brief from scratch and generate on-brand copy."
+          badge="standalone"
+          badgeTone="rebuild"
         />
+
+        <Card className="mb-4 p-4" accent={ACCENT}>
+          <p className="text-[14px] font-bold">Creative Brief</p>
+          <textarea
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            rows={5}
+            placeholder="Describe the creative — angle, promise, audience, tone, offer…"
+            className="mt-2 w-full resize-none rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-2)] p-3 text-[13px] outline-none focus:border-[var(--color-rebuild)]"
+          />
+        </Card>
+
+        <p className="mb-2 text-[13px] font-bold">Brand</p>
+        {brands.length === 0 ? (
+          <Card className="mb-4 p-3 text-[12.5px] text-[var(--color-ink-muted)]">
+            No brands — copy will be generic.
+          </Card>
+        ) : (
+          <div className="no-scrollbar mb-4 flex gap-2 overflow-x-auto pb-1">
+            {brands.map((b) => {
+              const on = b.slug === brandSlug;
+              return (
+                <button
+                  key={b.slug}
+                  onClick={() => setBrandSlug(on ? "" : b.slug)}
+                  className="shrink-0 rounded-2xl border px-3.5 py-2 text-left transition-colors"
+                  style={{
+                    borderColor: on ? ACCENT : "var(--color-line)",
+                    background: on ? "var(--color-rebuild-soft)" : "var(--color-surface)",
+                  }}
+                >
+                  <span className="block text-[13px] font-bold" style={{ color: on ? ACCENT : "var(--color-ink)" }}>
+                    {b.name}
+                  </span>
+                  <span className="block text-[11px] text-[var(--color-ink-muted)]">
+                    {verticalLabel(b.vertical)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="mb-4 flex items-center justify-between">
+          <span className="text-[13px] font-semibold text-[var(--color-ink-muted)]">Variants</span>
+          <Segmented options={["2", "3", "4"]} value={String(variants)} onChange={(v) => setVariants(Number(v))} accent={ACCENT} />
+        </div>
+
+        <p className="mb-2 text-[15px] font-bold">Generated</p>
+        {creatives.length === 0 ? (
+          <EmptyState icon={Sparkles} title="No variants yet" hint="Write a brief, pick a brand, generate." />
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {creatives.slice(0, 6).map((c) => (
+              <Card key={c.id} className="p-3">
+                <p className="line-clamp-3 text-[12.5px] font-bold leading-tight">{c.hook_text}</p>
+                {c.cta_text && (
+                  <p className="mt-1 truncate text-[11px] text-[var(--color-ink-muted)]">{c.cta_text}</p>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {note && (
+          <p className="mt-3 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
+            {note}
+          </p>
+        )}
+
+        <button
+          onClick={generateScratch}
+          disabled={pending}
+          className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-[16px] font-bold text-white disabled:opacity-60 active:scale-[0.99]"
+          style={{ background: ACCENT }}
+        >
+          {pending ? (
+            <>
+              <Loader2 size={18} className="animate-spin" /> Generating…
+            </>
+          ) : (
+            <>
+              <Sparkles size={18} /> Generate {variants}
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={() => router.push("/publish")}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3.5 text-[15px] font-bold text-[var(--color-rebuild)]"
+        >
+          Send to Publish <ArrowRight size={17} />
+        </button>
       </div>
     );
   }

@@ -39,17 +39,19 @@ export default async function HomePage() {
       </p>
 
       {/* Live stats */}
-      <div className="mb-4 grid grid-cols-4 gap-2">
+      <div className="mb-5 grid grid-cols-4 divide-x divide-[var(--color-line)] overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[0_1px_2px_rgba(16,27,22,0.04)]">
         {tiles.map((t, i) => (
-          <Link key={t.label} href={t.href}>
-            <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-3 text-center">
-              <p className="text-[22px] font-extrabold tabular-nums" style={{ color: STAT_ACCENT[i] }}>
-                {compact(t.value)}
-              </p>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
-                {t.label}
-              </p>
-            </div>
+          <Link
+            key={t.label}
+            href={t.href}
+            className="px-2 py-3.5 text-center transition-colors hover:bg-[var(--color-surface-2)]"
+          >
+            <p className="text-[23px] font-extrabold leading-none tabular-nums" style={{ color: STAT_ACCENT[i] }}>
+              {compact(t.value)}
+            </p>
+            <p className="mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+              {t.label}
+            </p>
           </Link>
         ))}
       </div>

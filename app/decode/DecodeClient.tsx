@@ -11,13 +11,23 @@ import {
   Target,
   ExternalLink,
   Loader2,
-  Diamond,
+  Link2,
 } from "lucide-react";
 import { ScreenHeader, Card, Badge, WinnerBadge, Tabs, EmptyState } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
-import { decodeAd } from "@/app/actions";
+import { decodeAd, decodeUrl } from "@/app/actions";
 import type { AdRow, HookPattern } from "@/lib/data";
+
+type UrlDecode = {
+  hook?: string;
+  emotional_trigger?: string;
+  visual_mechanic?: string;
+  copy_structure?: string;
+  cta?: string;
+  summary?: string;
+  brief?: string;
+};
 
 const ACCENT = "var(--color-decode)";
 
@@ -34,6 +44,31 @@ export default function DecodeClient({
   const [tab, setTab] = useState("why");
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+  const [url, setUrl] = useState("");
+  const [urlResult, setUrlResult] = useState<UrlDecode | null>(null);
+  const [urlBrief, setUrlBrief] = useState("");
+
+  function runUrlDecode() {
+    if (!url.trim()) return;
+    setNote(null);
+    startTransition(async () => {
+      const r = await decodeUrl(url.trim());
+      if (!r.ok) {
+        setNote(r.error || "Decode failed");
+        return;
+      }
+      const d = (r.data || {}) as UrlDecode;
+      setUrlResult(d);
+      setUrlBrief(d.brief || "");
+    });
+  }
+
+  function toRebuildScratch(b: string) {
+    try {
+      sessionStorage.setItem("brief:scratch", b);
+    } catch {}
+    router.push("/rebuild?scratch=1");
+  }
 
   const p = patterns[0];
   const defaultBrief = ad
@@ -46,14 +81,88 @@ export default function DecodeClient({
   const [brief, setBrief] = useState(defaultBrief);
 
   if (!ad) {
+    const rows: [string, string | undefined][] = urlResult
+      ? [
+          ["Hook", urlResult.hook],
+          ["Emotional trigger", urlResult.emotional_trigger],
+          ["Visual mechanic", urlResult.visual_mechanic],
+          ["Copy structure", urlResult.copy_structure],
+          ["CTA / offer", urlResult.cta],
+          ["Summary", urlResult.summary],
+        ]
+      : [];
     return (
       <div>
-        <ScreenHeader title="Decode" subtitle="Understand why the selected creative wins." />
-        <EmptyState
-          icon={Diamond}
-          title="No ad selected"
-          hint="Pick a winner on the Source screen, then send it to Decode."
+        <ScreenHeader
+          title="Decode"
+          subtitle="Paste any ad or landing-page URL to break down why it works."
+          badge="standalone"
+          badgeTone="decode"
         />
+        <Card className="mb-4 p-4" accent={ACCENT}>
+          <p className="text-[14px] font-bold">Decode a URL</p>
+          <p className="mt-0.5 text-[12.5px] text-[var(--color-ink-muted)]">
+            A landing page or ad URL — works best on text-based pages. Or pick a winner in Source.
+          </p>
+          <div className="mt-3 flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-2)] px-3.5 py-2.5">
+            <Link2 size={16} className="text-[var(--color-ink-muted)]" />
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runUrlDecode()}
+              placeholder="https://…"
+              className="w-full bg-transparent text-[14px] outline-none placeholder:text-[var(--color-ink-muted)]"
+            />
+            <button
+              onClick={runUrlDecode}
+              disabled={pending || !url.trim()}
+              className="flex items-center gap-1 rounded-xl px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-40"
+              style={{ background: ACCENT }}
+            >
+              {pending ? <Loader2 size={14} className="animate-spin" /> : "Decode"}
+            </button>
+          </div>
+          {note && (
+            <p className="mt-2 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
+              {note}
+            </p>
+          )}
+        </Card>
+
+        {urlResult && (
+          <>
+            <div className="flex flex-col gap-2.5">
+              {rows
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                  <Card key={k} className="p-4">
+                    <p className="text-[14px] font-bold">{k}</p>
+                    <p className="mt-0.5 text-[13px] text-[var(--color-ink-muted)]">{v}</p>
+                  </Card>
+                ))}
+            </div>
+            <Card className="mt-3 p-4">
+              <p className="text-[14px] font-bold">Editable brief</p>
+              <p className="mt-0.5 text-[12.5px] text-[var(--color-ink-muted)]">
+                What Rebuild turns into new on-brand creative.
+              </p>
+              <textarea
+                value={urlBrief}
+                onChange={(e) => setUrlBrief(e.target.value)}
+                rows={6}
+                className="mt-2 w-full resize-none rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-2)] p-3 text-[13.5px] outline-none focus:border-[var(--color-decode)]"
+              />
+            </Card>
+            <button
+              onClick={() => toRebuildScratch(urlBrief)}
+              disabled={!urlBrief.trim()}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-[16px] font-bold text-white disabled:opacity-40 active:scale-[0.99]"
+              style={{ background: ACCENT }}
+            >
+              Rebuild from this <ArrowRight size={18} strokeWidth={2.5} />
+            </button>
+          </>
+        )}
       </div>
     );
   }

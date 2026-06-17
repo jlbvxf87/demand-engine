@@ -3,8 +3,25 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
+import Anthropic from "@anthropic-ai/sdk";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
+
+function parseJson(raw: string): Record<string, unknown> {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        return JSON.parse(m[0]);
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
    Server actions = the factory's "live" buttons. They call the existing,
@@ -144,6 +161,111 @@ export async function generateCreatives(
     return { ok: true, data: { created: rows.length, image: Boolean(imageUrl) } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Persist failed" };
+  }
+}
+
+/**
+ * Decode ANY url (standalone — no Source pick needed). Best-effort fetch of the
+ * page text, then Claude extracts why it works + a rebuild brief. Returns inline.
+ */
+export async function decodeUrl(url: string): Promise<ActionResult> {
+  const u = (url || "").trim();
+  if (!/^https?:\/\//i.test(u)) return { ok: false, error: "Enter a valid http(s) URL" };
+  try {
+    let pageText = "";
+    try {
+      const res = await fetch(u, { headers: { "user-agent": "Mozilla/5.0" }, cache: "no-store" });
+      const html = await res.text();
+      pageText = html
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 6000);
+    } catch {
+      /* JS-only page — Claude infers from the URL */
+    }
+    const anthropic = new Anthropic();
+    const msg = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1200,
+      system:
+        "You are a direct-response ad strategist. Analyze the ad/landing page and return JSON only — no markdown, no prose.",
+      messages: [
+        {
+          role: "user",
+          content: `Analyze this ad/landing page (URL: ${u}).\nPage text:\n${
+            pageText || "(could not fetch page — infer from the URL and brand)"
+          }\n\nReturn JSON:\n{"hook":"the core hook","emotional_trigger":"","visual_mechanic":"","copy_structure":"","cta":"","summary":"1-2 sentences","brief":"a creative brief to rebuild this on-brand, compliant"}`,
+        },
+      ],
+    });
+    const raw = msg.content[0]?.type === "text" ? msg.content[0].text.trim() : "{}";
+    return { ok: true, data: parseJson(raw) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Decode failed" };
+  }
+}
+
+/**
+ * Rebuild from a SCRATCH brief (standalone — no Source ad needed). Claude writes
+ * N hooks from the brief, persisted to ad_creatives so they flow to Publish.
+ */
+export async function generateFromBrief(input: {
+  brief: string;
+  brandSlug?: string | null;
+  variants?: number;
+}): Promise<ActionResult> {
+  const brief = (input.brief || "").trim();
+  if (!brief) return { ok: false, error: "Write a brief first" };
+  const variants = Math.max(1, Math.min(6, input.variants ?? 3));
+  try {
+    const sb = getServiceClient();
+    let voice = "";
+    if (input.brandSlug) {
+      const { data } = await sb.from("brands").select("brand_voice").eq("slug", input.brandSlug).single();
+      voice = (data as { brand_voice?: string } | null)?.brand_voice || "";
+    }
+    const anthropic = new Anthropic();
+    const msg = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 2000,
+      system:
+        "You are a direct-response copywriter. Return JSON only. No banned CTAs (Get Started/Sign Up/Learn More), no therapeutic or guaranteed-outcome claims.",
+      messages: [
+        {
+          role: "user",
+          content: `From this brief, write ${variants} original ad hook variations.${
+            voice ? ` Brand voice: ${voice}.` : ""
+          }\nBRIEF: ${brief}\nReturn JSON: {"hooks":[{"hook":"5-10 words","bridge":"one connecting sentence","cta":"3-5 words, outcome-framed"}]}`,
+        },
+      ],
+    });
+    const raw = msg.content[0]?.type === "text" ? msg.content[0].text.trim() : "{}";
+    const hooks = ((parseJson(raw).hooks as { hook?: string; bridge?: string; cta?: string }[]) || []).slice(
+      0,
+      variants
+    );
+    if (hooks.length === 0) return { ok: false, error: "No hooks generated" };
+    const rows = hooks.map((h) => ({
+      brand_slug: input.brandSlug ?? null,
+      hook_type: "scratch",
+      hook_text: h.hook ?? "(untitled)",
+      bridge_text: h.bridge ?? null,
+      cta_text: h.cta ?? null,
+      all_hooks: hooks,
+      platform: "meta",
+      creative_type: "scratch",
+      video_status: "none",
+    }));
+    const { error } = await sb.from("ad_creatives").insert(rows);
+    if (error) return { ok: false, error: error.message };
+    revalidatePath("/rebuild");
+    revalidatePath("/publish");
+    return { ok: true, data: { created: rows.length } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Generation failed" };
   }
 }
 
