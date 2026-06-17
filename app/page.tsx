@@ -1,180 +1,165 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
-import { Card, Badge, StatusChip, type StationStatus } from "@/components/ui";
+import { Search, ArrowRight, Play, Sparkles } from "lucide-react";
+import { Card, WinnerBadge } from "@/components/ui";
+import { getHomeStats, getWinningCreatives, getGeneratedCreatives } from "@/lib/data";
+import { compact } from "@/lib/format";
+import { providerLabel } from "@/lib/video";
 
-type Station = {
-  n: number;
-  stage: string;
-  href: string;
-  title: string;
-  desc: string;
-  status: StationStatus;
-  accent: string;
-  soft: string;
-};
+export const dynamic = "force-dynamic";
 
-const STATIONS: Station[] = [
-  {
-    n: 1,
-    stage: "source",
-    href: "/source",
-    title: "Source",
-    desc: "Find proven ads by advertiser, creative, or identity.",
-    status: "ready",
-    accent: "var(--color-source)",
-    soft: "var(--color-source-soft)",
-  },
-  {
-    n: 2,
-    stage: "decode",
-    href: "/decode",
-    title: "Decode",
-    desc: "Extract hook, trigger, visual mechanic, offer, CTA.",
-    status: "ready",
-    accent: "var(--color-decode)",
-    soft: "var(--color-decode-soft)",
-  },
-  {
-    n: 3,
-    stage: "rebuild",
-    href: "/rebuild",
-    title: "Rebuild",
-    desc: "Generate on-brand hook/bridge/CTA and T2V variants.",
-    status: "built",
-    accent: "var(--color-rebuild)",
-    soft: "var(--color-rebuild-soft)",
-  },
-  {
-    n: 4,
-    stage: "publish",
-    href: "/publish",
-    title: "Publish",
-    desc: "Export or push live, capture performance, rank winners.",
-    status: "review",
-    accent: "var(--color-publish)",
-    soft: "var(--color-publish-soft)",
-  },
+const STAT_ACCENT = [
+  "var(--color-source)",
+  "var(--color-rebuild)",
+  "var(--color-publish)",
+  "var(--color-decode)",
 ];
 
-function Stepper() {
-  return (
-    <div className="mb-6 flex items-center justify-between px-1">
-      {STATIONS.map((s, i) => (
-        <div key={s.stage} className="flex flex-1 items-center last:flex-none">
-          <div className="flex flex-col items-center gap-1.5">
-            <span
-              className="grid h-7 w-7 place-items-center rounded-full text-[12px] font-bold"
-              style={{
-                background: i === 0 ? s.accent : s.soft,
-                color: i === 0 ? "#fff" : s.accent,
-              }}
-            >
-              {s.n}
-            </span>
-            <span
-              className="text-[12px] font-semibold"
-              style={{ color: i === 0 ? s.accent : "var(--color-ink-muted)" }}
-            >
-              {s.title}
-            </span>
-          </div>
-          {i < STATIONS.length - 1 && (
-            <span className="mx-1 mb-5 h-px flex-1 bg-[var(--color-line)]" />
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
+export default async function HomePage() {
+  const [stats, winners, creatives] = await Promise.all([
+    getHomeStats(),
+    getWinningCreatives({ limit: 6 }),
+    getGeneratedCreatives(12),
+  ]);
+  const videos = creatives.filter((c) => c.video_url).slice(0, 6);
 
-export default function HomePage() {
+  const tiles = [
+    { label: "Winners", value: stats.winners, href: "/source" },
+    { label: "Creatives", value: stats.creatives, href: "/publish" },
+    { label: "Videos", value: stats.videos, href: "/publish" },
+    { label: "Stories", value: stats.stories, href: "/publish" },
+  ];
+
   return (
     <div>
-      <h1 className="text-[28px] font-extrabold leading-tight tracking-tight md:text-[34px]">
+      <h1 className="text-[26px] font-extrabold leading-tight tracking-tight md:text-[30px]">
         Creative Factory
       </h1>
-      <p className="mb-6 mt-1 text-[14px] text-[var(--color-ink-muted)]">
-        Find winners. Decode why. Rebuild. Publish to test.
+      <p className="mb-5 mt-1 text-[14px] text-[var(--color-ink-muted)]">
+        Find winners → decode why → rebuild → publish to test.
       </p>
 
-      <Stepper />
-
-      {/* Factory line summary */}
-      <Card className="mb-5 p-5" accent="var(--color-source)">
-        <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--color-source-soft)] text-[var(--color-source)]">
-            <ArrowRight size={18} strokeWidth={2.5} />
-          </div>
-          <p className="text-[15px] font-bold">Factory Line</p>
-        </div>
-        <p className="mt-2 text-[13.5px] text-[var(--color-ink-muted)]">
-          One clean path: winning ads in → tested creative out.
-        </p>
-        <p className="mt-3 text-[15px] font-bold tracking-tight">
-          Source <span className="text-[var(--color-ink-muted)]">→</span> Decode{" "}
-          <span className="text-[var(--color-ink-muted)]">→</span> Rebuild{" "}
-          <span className="text-[var(--color-ink-muted)]">→</span> Publish
-        </p>
-        <div className="mt-3 flex gap-2">
-          <Badge tone="source">KISS mode</Badge>
-          <Badge tone="rebuild">4 stations</Badge>
-        </div>
-      </Card>
-
-      {/* Station cards */}
-      <div className="flex flex-col gap-3">
-        {STATIONS.map((s) => (
-          <Link key={s.stage} href={s.href} className="block">
-            <Card className="flex items-center gap-3 p-4 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]">
-              <span
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-[15px] font-extrabold"
-                style={{ background: s.soft, color: s.accent }}
-              >
-                {s.n}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <p className="text-[15.5px] font-bold">{s.title}</p>
-                  <StatusChip status={s.status} />
-                </div>
-                <p className="mt-0.5 truncate text-[13px] text-[var(--color-ink-muted)]">
-                  {s.desc}
-                </p>
-              </div>
-              <ArrowRight
-                size={18}
-                className="shrink-0"
-                style={{ color: s.accent }}
-              />
-            </Card>
+      {/* Live stats */}
+      <div className="mb-4 grid grid-cols-4 gap-2">
+        {tiles.map((t, i) => (
+          <Link key={t.label} href={t.href}>
+            <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-3 text-center">
+              <p className="text-[22px] font-extrabold tabular-nums" style={{ color: STAT_ACCENT[i] }}>
+                {compact(t.value)}
+              </p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                {t.label}
+              </p>
+            </div>
           </Link>
         ))}
       </div>
 
-      {/* Optional lane */}
-      <Card className="mt-5 border-dashed p-5">
-        <p className="text-[12px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
-          Optional lane
-        </p>
-        <p className="mt-1 text-[18px] font-extrabold tracking-tight">
-          Landing Page Intel
-        </p>
-        <p className="mt-1 text-[13.5px] text-[var(--color-ink-muted)]">
-          Use the destination page for research or build a buy page separately.
-        </p>
-        <Badge tone="neutral" className="mt-3">
-          Not required to test creative
-        </Badge>
-      </Card>
-
-      {/* Primary CTA */}
+      {/* Primary action */}
       <Link
         href="/source"
-        className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--color-source)] px-5 py-4 text-[16px] font-bold text-white active:scale-[0.99]"
+        className="mb-6 flex items-center gap-2 rounded-2xl px-4 py-3.5 text-[15px] font-bold text-white active:scale-[0.99]"
+        style={{ background: "var(--color-source)" }}
       >
-        Start at Source
-        <ArrowRight size={18} strokeWidth={2.5} />
+        <Search size={18} strokeWidth={2.4} />
+        Search winning ads
+        <ArrowRight size={18} strokeWidth={2.4} className="ml-auto" />
       </Link>
+
+      {/* Top winning ads */}
+      <SectionHeader title="Top winning ads" href="/source" cta="Source" />
+      {winners.length === 0 ? (
+        <Empty
+          icon={<Search size={22} className="text-[var(--color-ink-muted)]" />}
+          title="No winners yet"
+          hint="Run a search in Source to surface high-performing ads."
+        />
+      ) : (
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {winners.map((w) => (
+            <Link key={w.id} href={`/decode?ad=${w.id}`}>
+              <Card className="overflow-hidden p-0 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]">
+                <div className="aspect-[4/3] w-full bg-[var(--color-surface-2)]">
+                  {w.page_screenshot_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={w.page_screenshot_url}
+                      alt={w.page_name || "ad"}
+                      className="h-full w-full object-cover object-top"
+                    />
+                  ) : (
+                    <div className="grid h-full w-full place-items-center text-[12px] text-[var(--color-ink-muted)]">
+                      no preview
+                    </div>
+                  )}
+                </div>
+                <div className="p-2.5">
+                  <p className="truncate text-[12.5px] font-bold">{w.page_name || "Unknown"}</p>
+                  <div className="mt-1.5 flex items-center justify-between gap-1">
+                    <WinnerBadge badge={w.badge} />
+                    <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--color-source)" }}>
+                      {Math.round(w.winner_score)}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {/* Latest videos */}
+      <SectionHeader title="Latest videos" href="/publish" cta="Publish" />
+      {videos.length === 0 ? (
+        <Empty
+          icon={<Sparkles size={22} className="text-[var(--color-ink-muted)]" />}
+          title="No videos yet"
+          hint="Generate creatives in Publish (Replicate or Multi-scene)."
+        />
+      ) : (
+        <div className="no-scrollbar -mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
+          {videos.map((v) => (
+            <Link key={v.id} href="/publish" className="shrink-0">
+              <div className="relative aspect-[9/16] w-28 overflow-hidden rounded-xl bg-[#10151B]">
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video
+                  src={`${v.video_url}#t=0.1`}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className="h-full w-full object-cover"
+                />
+                <span className="absolute inset-0 grid place-items-center bg-black/25">
+                  <Play size={20} className="text-white" fill="currentColor" />
+                </span>
+                <span className="absolute inset-x-1 bottom-1 truncate rounded bg-black/55 px-1 py-0.5 text-[9px] font-bold text-white">
+                  {providerLabel(v.video_provider)}
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SectionHeader({ title, href, cta }: { title: string; href: string; cta: string }) {
+  return (
+    <div className="mb-2.5 flex items-center justify-between">
+      <h2 className="text-[16px] font-bold tracking-tight">{title}</h2>
+      <Link href={href} className="text-[12.5px] font-semibold text-[var(--color-ink-muted)]">
+        {cta} →
+      </Link>
+    </div>
+  );
+}
+
+function Empty({ icon, title, hint }: { icon: React.ReactNode; title: string; hint: string }) {
+  return (
+    <div className="mb-6 flex flex-col items-center justify-center gap-2 rounded-[var(--radius-card)] border border-dashed border-[var(--color-line)] bg-[var(--color-surface)] px-6 py-10 text-center">
+      {icon}
+      <p className="text-[14px] font-semibold">{title}</p>
+      <p className="max-w-xs text-[12.5px] text-[var(--color-ink-muted)]">{hint}</p>
     </div>
   );
 }

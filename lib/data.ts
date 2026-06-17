@@ -282,6 +282,30 @@ export async function getGeneratedCreatives(limit = 24): Promise<Creative[]> {
   }
 }
 
+export type HomeStats = { winners: number; creatives: number; videos: number; stories: number };
+
+/** Live counts for the Home dashboard. Defensive — zeros on error. */
+export async function getHomeStats(): Promise<HomeStats> {
+  try {
+    const sb = getServiceClient();
+    const head = async (table: string, applyFilter?: boolean) => {
+      let q = sb.from(table).select("id", { count: "exact", head: true });
+      if (applyFilter) q = q.not("video_url", "is", null);
+      const { count } = await q;
+      return count ?? 0;
+    };
+    const [winners, creatives, videos, stories] = await Promise.all([
+      head("spy_ads"),
+      head("ad_creatives"),
+      head("ad_creatives", true),
+      head("storyboards"),
+    ]);
+    return { winners, creatives, videos, stories };
+  } catch {
+    return { winners: 0, creatives: 0, videos: 0, stories: 0 };
+  }
+}
+
 export type Storyboard = {
   id: string;
   prompt: string;
