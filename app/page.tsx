@@ -35,7 +35,7 @@ export default async function HomePage() {
         Creative Factory
       </h1>
       <p className="mb-5 mt-1 text-[14px] text-[var(--color-ink-muted)]">
-        Find winners → decode why → rebuild → publish to test.
+        Find winners → decode why → create → publish to test.
       </p>
 
       {/* Live stats */}

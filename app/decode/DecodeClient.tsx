@@ -67,7 +67,7 @@ export default function DecodeClient({
     try {
       sessionStorage.setItem("brief:scratch", b);
     } catch {}
-    router.push("/rebuild?scratch=1");
+    router.push("/publish");
   }
 
   const p = patterns[0];
@@ -159,7 +159,7 @@ export default function DecodeClient({
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-[16px] font-bold text-white disabled:opacity-40 active:scale-[0.99]"
               style={{ background: ACCENT }}
             >
-              Rebuild from this <ArrowRight size={18} strokeWidth={2.5} />
+              Send to Create <ArrowRight size={18} strokeWidth={2.5} />
             </button>
           </>
         )}
@@ -196,9 +196,9 @@ export default function DecodeClient({
 
   function toRebuild() {
     try {
-      sessionStorage.setItem(`brief:${ad!.id}`, brief);
+      sessionStorage.setItem("brief:scratch", brief);
     } catch {}
-    router.push(`/rebuild?ad=${ad!.id}`);
+    router.push("/publish");
   }
 
   return (
@@ -359,7 +359,7 @@ export default function DecodeClient({
         className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-[16px] font-bold text-white active:scale-[0.99]"
         style={{ background: ACCENT }}
       >
-        Rebuild Creative
+        Send to Create
         <ArrowRight size={18} strokeWidth={2.5} />
       </button>
     </div>

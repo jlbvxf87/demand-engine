@@ -1,4 +1,4 @@
-import { Home, Search, Diamond, PenLine, Play } from "lucide-react";
+import { Home, Search, Diamond, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export type Stage = "home" | "source" | "decode" | "rebuild" | "publish";
@@ -39,18 +39,10 @@ export const NAV: NavItem[] = [
     accentSoft: "var(--color-decode-soft)",
   },
   {
-    stage: "rebuild",
-    label: "Rebuild",
-    href: "/rebuild",
-    icon: PenLine,
-    accent: "var(--color-rebuild)",
-    accentSoft: "var(--color-rebuild-soft)",
-  },
-  {
     stage: "publish",
-    label: "Publish",
+    label: "Create",
     href: "/publish",
-    icon: Play,
+    icon: Sparkles,
     accent: "var(--color-publish)",
     accentSoft: "var(--color-publish-soft)",
   },

@@ -21,6 +21,7 @@ import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video"
 import { renderVideo, pollVideoJobs } from "@/app/actions";
 import ReplicatePanel from "./ReplicatePanel";
 import StoryboardPanel from "./StoryboardPanel";
+import CopyPanel from "./CopyPanel";
 import type { Creative, Storyboard } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
@@ -57,6 +58,13 @@ export default function PublishClient({
     ["scripting", "generating", "stitching"].includes(s.status)
   );
   const polling = anyRendering || anyStoryboardActive;
+
+  // Land on Copy when a brief was handed over from Decode.
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("brief:scratch")) setMode("copy");
+    } catch {}
+  }, []);
 
   // Drive kie polling from the client while clips render or stories stitch.
   useEffect(() => {
@@ -98,25 +106,26 @@ export default function PublishClient({
   return (
     <div>
       <ScreenHeader
-        title="Publish"
-        subtitle="Generated creatives — render to video, review, publish."
+        title="Create"
+        subtitle="Generate copy & video, then publish to test."
         badge={creatives.length ? "ready" : "empty"}
         badgeTone={creatives.length ? "publish" : "neutral"}
       />
 
-      {/* Create: replicate a single clip, or build a multi-scene story */}
+      {/* Create: copy, single replicate, or multi-scene story */}
       <div className="mb-4">
         <Tabs
           accent={ACCENT}
           active={mode}
           onChange={setMode}
           tabs={[
+            { id: "copy", label: "Copy" },
             { id: "replicate", label: "Replicate" },
             { id: "story", label: "Multi-scene" },
           ]}
         />
       </div>
-      {mode === "replicate" ? <ReplicatePanel /> : <StoryboardPanel />}
+      {mode === "copy" ? <CopyPanel /> : mode === "replicate" ? <ReplicatePanel /> : <StoryboardPanel />}
 
       {/* Stories — multi-scene, with the stitched final */}
       {storyboards.length > 0 && (
