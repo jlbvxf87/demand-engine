@@ -47,10 +47,12 @@ export type AdRow = {
   page_pricing: string | null;
   page_ai_summary: string | null;
   crawl_status: string | null;
+  creative_media_url: string | null;
+  creative_media_type: string | null;
 };
 
 const AD_COLS =
-  "id, meta_ad_id, page_name, page_id, ad_title, ad_body, ad_snapshot_url, page_screenshot_url, destination_url, winner_score, days_running, brand_ad_count, spend_lower, spend_upper, impressions_lower, impressions_upper, vertical, page_headline, page_offer, page_cta, page_product, page_pricing, page_ai_summary, crawl_status";
+  "id, meta_ad_id, page_name, page_id, ad_title, ad_body, ad_snapshot_url, page_screenshot_url, destination_url, winner_score, days_running, brand_ad_count, spend_lower, spend_upper, impressions_lower, impressions_upper, vertical, page_headline, page_offer, page_cta, page_product, page_pricing, page_ai_summary, crawl_status, creative_media_url, creative_media_type";
 
 function spendMid(a: { spend_lower: number | null; spend_upper: number | null }) {
   return ((a.spend_lower ?? 0) + (a.spend_upper ?? 0)) / 2;
@@ -87,6 +89,8 @@ function toAdRow(a: Record<string, unknown>): AdRow {
     page_pricing: (a.page_pricing as string) ?? null,
     page_ai_summary: (a.page_ai_summary as string) ?? null,
     crawl_status: (a.crawl_status as string) ?? null,
+    creative_media_url: (a.creative_media_url as string) ?? null,
+    creative_media_type: (a.creative_media_type as string) ?? null,
   };
 }
 

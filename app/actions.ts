@@ -87,6 +87,13 @@ export async function searchAds(keyword: string, filters: SearchFilters = {}): P
   return r;
 }
 
+/** Source: scrape the real ad creative (fbcdn media) for an ad via the scraper. */
+export async function fetchCreative(adId: string): Promise<ActionResult> {
+  const r = await callRoute("/api/spy/fetch-creative", { ad_id: adId });
+  if (r.ok) revalidatePath("/source");
+  return r;
+}
+
 /** Decode: crawl a winning ad's destination page (fills page_* + hook patterns). */
 export async function decodeAd(adId: string): Promise<ActionResult> {
   const r = await callRoute("/api/spy/crawl", { ad_id: adId });

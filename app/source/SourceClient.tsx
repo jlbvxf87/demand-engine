@@ -14,7 +14,7 @@ import {
 } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
-import { searchAds } from "@/app/actions";
+import { searchAds, fetchCreative } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
@@ -103,9 +103,22 @@ function FacebookAdPreview({ ad }: { ad: AdRow }) {
           {ad.ad_body}
         </p>
       )}
-      {previewImg ? (
+      {ad.creative_media_url ? (
+        ad.creative_media_type === "video" ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <video
+            src={ad.creative_media_url}
+            controls
+            playsInline
+            className="max-h-[440px] w-full bg-black object-contain"
+          />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={ad.creative_media_url} alt="ad creative" className="max-h-[440px] w-full bg-black object-contain" />
+        )
+      ) : previewImg ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={previewImg} alt="ad preview" className="max-h-[360px] w-full object-cover" />
+        <img src={previewImg} alt="landing preview" className="max-h-[360px] w-full object-cover" />
       ) : (
         <div className="grid aspect-[1.91/1] place-items-center bg-[var(--color-surface-2)] text-[12px] text-[var(--color-ink-muted)]">
           No image — tap “View ad on Meta”
@@ -152,6 +165,7 @@ export default function SourceClient({
   const [platform, setPlatform] = useState(""); // "" = all platforms
   const [detail, setDetail] = useState<AdRow | null>(null);
   const [advDetail, setAdvDetail] = useState<Advertiser | null>(null);
+  const [loadingCreative, setLoadingCreative] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
@@ -169,6 +183,24 @@ export default function SourceClient({
       if (!r.ok) setNote(r.error || "Search failed");
       else router.refresh();
     });
+  }
+
+  async function loadCreative() {
+    if (!detail) return;
+    setLoadingCreative(true);
+    setNote(null);
+    const r = await fetchCreative(detail.id);
+    setLoadingCreative(false);
+    if (!r.ok) {
+      setNote(r.error || "Couldn't load creative");
+      return;
+    }
+    const d = (r.data || {}) as { media_url?: string; media_type?: string };
+    if (d.media_url) {
+      setDetail({ ...detail, creative_media_url: d.media_url, creative_media_type: d.media_type ?? null });
+    } else {
+      setNote("No creative found on Meta's page for this ad.");
+    }
   }
 
   function toDecode(id: string) {
@@ -501,6 +533,22 @@ export default function SourceClient({
           <div className="flex flex-col gap-4">
             {/* Reconstructed Facebook ad (v1 parity) */}
             <FacebookAdPreview ad={detail} />
+
+            {!detail.creative_media_url && (
+              <button
+                onClick={loadCreative}
+                disabled={loadingCreative}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3 text-[13.5px] font-bold disabled:opacity-60"
+              >
+                {loadingCreative ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" /> Pulling the real creative…
+                  </>
+                ) : (
+                  "Load real creative"
+                )}
+              </button>
+            )}
 
             {/* Metrics */}
             <div className="grid grid-cols-4 gap-2">
