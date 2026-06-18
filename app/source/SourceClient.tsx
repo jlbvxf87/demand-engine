@@ -96,8 +96,8 @@ export default function SourceClient({
   const [media, setMedia] = useState<"ALL" | "VIDEO" | "IMAGE">("ALL");
   const [windowDays, setWindowDays] = useState(0); // 0 = any time
   const [platform, setPlatform] = useState(""); // "" = all platforms
-  const [selected, setSelected] = useState<{ id: string; name: string; sub: string } | null>(null);
   const [detail, setDetail] = useState<AdRow | null>(null);
+  const [advDetail, setAdvDetail] = useState<Advertiser | null>(null);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
@@ -106,13 +106,6 @@ export default function SourceClient({
   const adv = useMemo(() => advertisers.filter((a) => vFilter(a.vertical)), [advertisers, vertical]);
   const crv = useMemo(() => creatives.filter((a) => vFilter(a.vertical)), [creatives, vertical]);
   const byId = useMemo(() => new Map(creatives.map((c) => [c.id, c])), [creatives]);
-
-  /** Open the rich ad viewer when we have the full row; else fall back to select. */
-  function openAd(id: string | null, name: string, sub: string) {
-    const row = id ? byId.get(id) : undefined;
-    if (row) setDetail(row);
-    else setSelected({ id: id || "", name, sub });
-  }
 
   function runSearch() {
     if (!query.trim()) return;
@@ -250,17 +243,11 @@ export default function SourceClient({
               <span className="text-right">Winner</span>
             </div>
             {adv.map((a) => {
-              const on = selected?.id === a.topCreativeId;
+              const on = advDetail?.page_name === a.page_name;
               return (
                 <button
                   key={a.page_name}
-                  onClick={() =>
-                    openAd(
-                      a.topCreativeId,
-                      a.page_name,
-                      `${a.activeAds} active ads · ${verticalLabel(a.vertical)}`
-                    )
-                  }
+                  onClick={() => setAdvDetail(a)}
                   className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-[var(--color-line)] px-4 py-3 text-left transition-colors last:border-0"
                   style={{ background: on ? "var(--color-source-soft)" : "transparent" }}
                 >
@@ -274,7 +261,7 @@ export default function SourceClient({
                       )}
                     </span>
                     <span className="truncate text-[12px] text-[var(--color-ink-muted)]">
-                      {a.topCreative || "—"}
+                      {a.activeAds} ads · {verticalLabel(a.vertical)}
                     </span>
                   </span>
                   <span className="text-right text-[14px] font-bold tabular-nums">
@@ -296,7 +283,7 @@ export default function SourceClient({
         ) : (
           <div className="flex flex-col gap-3">
             {crv.map((c) => {
-              const on = selected?.id === c.id;
+              const on = detail?.id === c.id;
               return (
                 <Card
                   key={c.id}
@@ -374,25 +361,69 @@ export default function SourceClient({
           </div>
         ))}
 
-      {/* ── Selected winner + CTA ───────────────────────────────────────── */}
-      {selected && (
-        <Card className="mt-5 p-4" accent={ACCENT}>
-          <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
-            Selected winner
-          </p>
-          <p className="mt-1 text-[16px] font-extrabold leading-snug">{selected.name}</p>
-          <p className="text-[12.5px] text-[var(--color-ink-muted)]">{selected.sub}</p>
-          <button
-            onClick={() => selected.id && toDecode(selected.id)}
-            disabled={!selected.id}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white disabled:opacity-40"
-            style={{ background: ACCENT }}
-          >
-            Send Winner to Decode
-            <ArrowRight size={18} strokeWidth={2.4} />
-          </button>
-        </Card>
-      )}
+      {/* ── Advertiser detail ───────────────────────────────────────────── */}
+      <Modal
+        open={!!advDetail}
+        onClose={() => setAdvDetail(null)}
+        accent={ACCENT}
+        title={
+          <span className="flex items-center gap-2">
+            <span className="truncate">{advDetail?.page_name || "Advertiser"}</span>
+            {advDetail?.isPersona && (
+              <span className="rounded bg-[var(--color-decode-soft)] px-1.5 py-0.5 text-[9.5px] font-bold text-[var(--color-decode)]">
+                PERSONA
+              </span>
+            )}
+          </span>
+        }
+      >
+        {advDetail && (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-3 gap-2">
+              <Stat label="Ads found" value={advDetail.activeAds} accent={ACCENT} />
+              <Stat label="Winner" value={Math.round(advDetail.maxScore)} />
+              <Stat label="Vertical" value={verticalLabel(advDetail.vertical)} />
+            </div>
+            <p className="text-[12.5px] text-[var(--color-ink-muted)]">
+              We sampled {advDetail.activeAds} of this advertiser&apos;s ads in your search. Open their
+              full Meta Ad Library to see every ad and the live creatives.
+            </p>
+            <div className="flex flex-col gap-2">
+              {advDetail.page_id && (
+                <a
+                  href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${advDetail.page_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white"
+                  style={{ background: ACCENT }}
+                >
+                  <ExternalLink size={17} /> View all their ads on Meta
+                </a>
+              )}
+              {advDetail.topCreativeId && byId.get(advDetail.topCreativeId) && (
+                <button
+                  onClick={() => {
+                    const c = byId.get(advDetail.topCreativeId!);
+                    if (c) setDetail(c);
+                    setAdvDetail(null);
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3 text-[14px] font-bold"
+                >
+                  Inspect top creative
+                </button>
+              )}
+              {advDetail.topCreativeId && (
+                <button
+                  onClick={() => toDecode(advDetail.topCreativeId!)}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3 text-[14px] font-bold"
+                >
+                  Decode their angle <ArrowRight size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* ── Ad viewer ───────────────────────────────────────────────────── */}
       <Modal
