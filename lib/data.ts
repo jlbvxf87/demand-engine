@@ -117,6 +117,76 @@ export async function getWinningCreatives(f: AdFilters = {}): Promise<AdRow[]> {
   }
 }
 
+export type ScaledWinner = {
+  key: string;
+  ad: AdRow; // representative ad (for the detail viewer + scrape)
+  adCount: number; // how many ads run this same creative
+  landingPages: number; // distinct destinations/links it runs across
+  advertisers: number; // distinct pages running it
+  maxDays: number;
+};
+
+const looksLikeUrl = (s: string | null) => !!s && !/\s/.test(s.trim()) && /\.[a-z]{2,}/i.test(s);
+
+/**
+ * "Scaled winners" — creatives DUPLICATED across many ads / landing pages.
+ * Since Meta gives no spend for commercial ads, the strongest signal that a
+ * creative works is that an operator is running it over and over. Groups
+ * spy_ads by ad copy and ranks by (ad count + landing-page spread + longevity).
+ */
+export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
+  try {
+    const sb = getServiceClient();
+    const { data, error } = await sb
+      .from("spy_ads")
+      .select(AD_COLS)
+      .order("created_at", { ascending: false })
+      .limit(1500);
+    if (error || !data) return [];
+    const rows = data.map(toAdRow);
+
+    const groups = new Map<string, { ads: AdRow[]; pages: Set<string>; advs: Set<string> }>();
+    for (const r of rows) {
+      const body = (r.ad_body || "").toLowerCase().replace(/\s+/g, " ").trim();
+      if (body.length < 20) continue;
+      const key = body.slice(0, 140);
+      let g = groups.get(key);
+      if (!g) {
+        g = { ads: [], pages: new Set(), advs: new Set() };
+        groups.set(key, g);
+      }
+      g.ads.push(r);
+      if (looksLikeUrl(r.destination_url)) {
+        g.pages.add(r.destination_url!.replace(/^https?:\/\//, "").replace(/\/.*$/, ""));
+      }
+      if (r.page_name) g.advs.add(r.page_name);
+    }
+
+    const out: ScaledWinner[] = [];
+    for (const [key, g] of groups) {
+      if (g.ads.length < 2) continue; // only creatives an operator is duplicating
+      const rep = g.ads
+        .slice()
+        .sort((a, b) => b.winner_score - a.winner_score || b.days_running - a.days_running)[0];
+      out.push({
+        key,
+        ad: rep,
+        adCount: g.ads.length,
+        landingPages: g.pages.size,
+        advertisers: g.advs.size,
+        maxDays: Math.max(...g.ads.map((a) => a.days_running)),
+      });
+    }
+    out.sort(
+      (a, b) =>
+        b.adCount + b.landingPages * 2 + b.maxDays * 0.1 - (a.adCount + a.landingPages * 2 + a.maxDays * 0.1)
+    );
+    return out.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
 export type Advertiser = {
   page_name: string;
   page_id: string | null;

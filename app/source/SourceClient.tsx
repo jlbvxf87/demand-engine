@@ -6,6 +6,7 @@ import { Search, ArrowRight, ExternalLink, Loader2, CornerDownRight } from "luci
 import {
   ScreenHeader,
   Card,
+  Badge,
   WinnerBadge,
   Tabs,
   EmptyState,
@@ -15,7 +16,7 @@ import {
 import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { searchAds, fetchCreative, searchByPage } from "@/app/actions";
-import type { Advertiser, AdRow, IdentityRollup } from "@/lib/data";
+import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
 
@@ -147,15 +148,17 @@ export default function SourceClient({
   advertisers,
   creatives,
   identity,
+  scaled,
   verticals,
 }: {
   advertisers: Advertiser[];
   creatives: AdRow[];
   identity: IdentityRollup[];
+  scaled: ScaledWinner[];
   verticals: string[];
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState("advertisers");
+  const [tab, setTab] = useState("scaled");
   const [vertical, setVertical] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [country, setCountry] = useState("US");
@@ -322,12 +325,47 @@ export default function SourceClient({
           active={tab}
           onChange={setTab}
           tabs={[
+            { id: "scaled", label: `Scaled${scaled.length ? ` · ${scaled.length}` : ""}` },
             { id: "advertisers", label: `Advertisers${adv.length ? ` · ${adv.length}` : ""}` },
             { id: "creatives", label: `Creatives${crv.length ? ` · ${crv.length}` : ""}` },
             { id: "identity", label: `Identity${identity.length ? ` · ${identity.length}` : ""}` },
           ]}
         />
       </div>
+
+      {/* ── Scaled winners (duplication = proven) ───────────────────────── */}
+      {tab === "scaled" &&
+        (scaled.length === 0 ? (
+          <EmptyState
+            icon={Search}
+            title="No scaled winners yet"
+            hint="Search, or “Pull all their ads” on a brand — creatives an operator runs over and over (across many ads / landing pages) surface here."
+          />
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
+              Creatives an operator is running over and over — the strongest “this works” signal.
+            </p>
+            {scaled.map((w) => (
+              <button
+                key={w.key}
+                onClick={() => setDetail(w.ad)}
+                className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] p-3.5 text-left shadow-[0_1px_2px_rgba(16,21,27,0.03),0_10px_28px_-16px_rgba(16,21,27,0.12)] transition-all duration-200 hover:-translate-y-0.5"
+              >
+                <p className="line-clamp-3 text-[13px] font-semibold leading-snug">
+                  {w.ad.ad_body || w.ad.ad_title || w.ad.page_headline}
+                </p>
+                <p className="truncate text-[11.5px] text-[var(--color-ink-muted)]">{w.ad.page_name}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge tone="source">{w.adCount}× ads</Badge>
+                  {w.landingPages > 1 && <Badge tone="neutral">{w.landingPages} landing pages</Badge>}
+                  {w.advertisers > 1 && <Badge tone="neutral">{w.advertisers} advertisers</Badge>}
+                  <Badge tone="neutral">{w.maxDays}d</Badge>
+                </div>
+              </button>
+            ))}
+          </div>
+        ))}
 
       {/* ── Advertisers ─────────────────────────────────────────────────── */}
       {tab === "advertisers" &&
