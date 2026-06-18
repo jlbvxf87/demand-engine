@@ -15,7 +15,7 @@ import {
 } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
-import { toSiteUrl, toDomain } from "@/lib/url";
+import { toSiteUrl, toDomain, landingShot } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
 import { isIndependent } from "@/lib/targeting";
 import { searchAds, fetchCreative, searchByPage, loadCreatives } from "@/app/actions";
@@ -74,9 +74,7 @@ function FilterSelect({
 function FacebookAdPreview({ ad }: { ad: AdRow }) {
   const abs = toSiteUrl(ad.destination_url);
   const hook = adHook(ad.ad_body, ad.ad_title, ad.page_headline);
-  const previewImg =
-    ad.page_screenshot_url ||
-    (abs ? `https://image.thum.io/get/width/600/crop/380/noanimate/${encodeURIComponent(abs)}` : null);
+  const previewImg = ad.page_screenshot_url || landingShot(ad.destination_url);
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-white">
       <div className="flex items-center gap-2.5 px-3 pt-3">
@@ -558,7 +556,15 @@ export default function SourceClient({
                   className="flex items-center gap-3 p-3"
                   accent={on ? ACCENT : undefined}
                 >
-                  <AdThumb src={c.page_screenshot_url} name={c.page_name} size={56} />
+                  <AdThumb
+                    src={
+                      (c.creative_media_type === "image" ? c.creative_media_url : null) ||
+                      c.page_screenshot_url ||
+                      landingShot(c.destination_url)
+                    }
+                    name={c.page_name}
+                    size={56}
+                  />
                   <button onClick={() => setDetail(c)} className="min-w-0 flex-1 text-left">
                     <p className="truncate text-[14px] font-bold">{c.page_name || "Advertiser"}</p>
                     <p className="truncate text-[12px] text-[var(--color-ink-muted)]">
