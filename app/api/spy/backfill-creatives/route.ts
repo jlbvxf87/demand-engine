@@ -47,10 +47,12 @@ async function run(req: Request) {
   const limit = Math.min(MAX_BATCH, Math.max(1, Number(url.searchParams.get("limit")) || DEFAULT_BATCH));
 
   const sb = getServiceClient();
+  // Only ads never attempted: no creative yet AND not already marked "none".
   const { data, error } = await sb
     .from("spy_ads")
     .select("id")
     .is("creative_media_url", null)
+    .is("creative_media_type", null)
     .not("ad_snapshot_url", "is", null)
     .order("winner_score", { ascending: false })
     .limit(limit);
@@ -69,6 +71,7 @@ async function run(req: Request) {
     .from("spy_ads")
     .select("id", { count: "exact", head: true })
     .is("creative_media_url", null)
+    .is("creative_media_type", null)
     .not("ad_snapshot_url", "is", null);
 
   return NextResponse.json({

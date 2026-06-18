@@ -65,6 +65,10 @@ export async function scrapeAndStoreCreative(adId: string): Promise<ScrapeResult
         .from("spy_ads")
         .update({ creative_media_url: json.media_url, creative_media_type: json.media_type ?? null })
         .eq("id", adId);
+    } else {
+      // Scrape ran but the page exposed no real creative (text/link ad, or a video
+      // that won't stream in headless). Mark it so the batch job stops retrying.
+      await sb.from("spy_ads").update({ creative_media_type: "none" }).eq("id", adId);
     }
     return { ok: true, media_url: json.media_url ?? null, media_type: json.media_type ?? null };
   } catch (e) {
