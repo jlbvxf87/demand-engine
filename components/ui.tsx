@@ -292,10 +292,7 @@ export function Modal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div
-        className="absolute inset-0 bg-[rgba(16,21,27,0.45)] backdrop-blur-[2px]"
-        onClick={onClose}
-      />
+      <div className="absolute inset-0 bg-[rgba(16,21,27,0.55)]" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
