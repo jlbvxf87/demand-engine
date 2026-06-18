@@ -31,6 +31,21 @@ const COUNTRIES = [
   { value: "MX", label: "Mexico" },
 ];
 
+/** Public Meta Ad Library page for an ad (no token, viewable by anyone). */
+function metaAdUrl(metaAdId: string | null) {
+  return metaAdId ? `https://www.facebook.com/ads/library/?id=${metaAdId}` : null;
+}
+
+/** Return a clickable site URL only if the value actually looks like one. */
+function siteUrl(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const t = s.trim();
+  if (/\s/.test(t)) return null; // captions/disclaimers contain spaces
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+/i.test(t)) return "https://" + t;
+  return null;
+}
+
 /** Pill-styled native dropdown for the advanced filter bar. */
 function FilterSelect({
   label,
@@ -306,13 +321,13 @@ export default function SourceClient({
                       </span>
                     </div>
                   </button>
-                  {c.destination_url && (
+                  {c.meta_ad_id && (
                     <a
-                      href={c.destination_url}
+                      href={metaAdUrl(c.meta_ad_id) as string}
                       target="_blank"
                       rel="noreferrer"
                       className="shrink-0 text-[var(--color-ink-muted)]"
-                      title="Open destination"
+                      title="View ad on Meta"
                     >
                       <ExternalLink size={16} />
                     </a>
@@ -471,27 +486,33 @@ export default function SourceClient({
 
             {/* External links */}
             <div className="flex flex-wrap gap-2">
-              {detail.ad_snapshot_url && (
+              {detail.meta_ad_id && (
                 <a
-                  href={`/api/spy/snapshot?url=${encodeURIComponent(detail.ad_snapshot_url)}`}
+                  href={metaAdUrl(detail.meta_ad_id) as string}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
+                  className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[12.5px] font-semibold text-white"
+                  style={{ background: ACCENT }}
                 >
-                  <ExternalLink size={14} /> View original on Meta
+                  <ExternalLink size={14} /> View ad on Meta
                 </a>
               )}
-              {detail.destination_url && (
+              {siteUrl(detail.destination_url) && (
                 <a
-                  href={detail.destination_url}
+                  href={siteUrl(detail.destination_url) as string}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
                 >
-                  <ExternalLink size={14} /> Destination page
+                  <ExternalLink size={14} /> Visit site
                 </a>
               )}
             </div>
+            {detail.destination_url && !siteUrl(detail.destination_url) && (
+              <p className="-mt-1 text-[11.5px] text-[var(--color-ink-muted)]">
+                Ad caption: “{detail.destination_url}” — open it on Meta to see the real destination.
+              </p>
+            )}
 
             {/* Primary CTA */}
             <button

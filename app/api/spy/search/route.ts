@@ -139,6 +139,12 @@ type ResolvedAdvertiser = {
   source:       'cache' | 'auto-resolved';
 };
 
+/** Prefer a caption that looks like a real domain/URL; else the first caption. */
+function pickDest(captions?: string[]): string | null {
+  const list = captions ?? [];
+  return list.find((c) => /^[\w.-]+\.[a-z]{2,}/i.test((c || '').trim())) ?? list[0] ?? null;
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
@@ -344,7 +350,7 @@ export async function POST(req: Request) {
       ad_body:                  ad.ad_creative_bodies?.[0] ?? null,
       ad_title:                 ad.ad_creative_link_titles?.[0] ?? null,
       ad_snapshot_url:          ad.ad_snapshot_url ?? null,
-      destination_url:          ad.ad_creative_link_captions?.[0] ?? null,
+      destination_url:          pickDest(ad.ad_creative_link_captions),
       impressions_lower:        impLower,
       impressions_upper:        impUpper,
       spend_lower:              spendLower,
