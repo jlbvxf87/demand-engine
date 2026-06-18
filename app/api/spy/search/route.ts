@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { isAdminAuthed } from '@/lib/admin-auth';
 import { isMachineAuthed } from '@/lib/machine-auth';
 import { getServiceClient } from '@/lib/supabase/server';
+import { looksLikeUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -139,10 +140,10 @@ type ResolvedAdvertiser = {
   source:       'cache' | 'auto-resolved';
 };
 
-/** Prefer a caption that looks like a real domain/URL; else the first caption. */
+/** Prefer a caption that's a clean URL (no spaces); else the first caption for context. */
 function pickDest(captions?: string[]): string | null {
-  const list = captions ?? [];
-  return list.find((c) => /^[\w.-]+\.[a-z]{2,}/i.test((c || '').trim())) ?? list[0] ?? null;
+  const list = (captions ?? []).map((c) => (c || '').trim()).filter(Boolean);
+  return list.find(looksLikeUrl) ?? list[0] ?? null;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────

@@ -36,11 +36,13 @@ function ShareButton({ url }: { url: string }) {
 
 export default function LatestVideos({ videos }: { videos: HomeVideo[] }) {
   const [open, setOpen] = useState<HomeVideo | null>(null);
+  const playable = videos.filter((v) => !!v.video_url);
+  if (playable.length === 0) return null;
 
   return (
     <>
       <div className="no-scrollbar -mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
-        {videos.map((v) => (
+        {playable.map((v) => (
           <button key={v.id} onClick={() => setOpen(v)} className="shrink-0">
             <div className="relative aspect-[9/16] w-28 overflow-hidden rounded-xl bg-[#10151B]">
               {/* eslint-disable-next-line jsx-a11y/media-has-caption */}

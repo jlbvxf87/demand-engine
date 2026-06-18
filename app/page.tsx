@@ -109,7 +109,7 @@ export default async function HomePage() {
                   </div>
                   <p className="mt-1 text-[10.5px] text-[var(--color-ink-muted)]">
                     {w.days_running}d running
-                    {money(w.spend_lower, w.spend_upper) !== "—" ? ` · ${money(w.spend_lower, w.spend_upper)}` : ""}
+                    {(w.spend_lower ?? 0) > 0 || (w.spend_upper ?? 0) > 0 ? ` · ${money(w.spend_lower, w.spend_upper)}` : ""}
                   </p>
                 </div>
               </Card>

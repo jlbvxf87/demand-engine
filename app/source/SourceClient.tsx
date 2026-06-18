@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
+import { toSiteUrl, toDomain } from "@/lib/url";
 import { searchAds, fetchCreative, searchByPage } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
@@ -35,16 +36,6 @@ const COUNTRIES = [
 /** Public Meta Ad Library page for an ad (no token, viewable by anyone). */
 function metaAdUrl(metaAdId: string | null) {
   return metaAdId ? `https://www.facebook.com/ads/library/?id=${metaAdId}` : null;
-}
-
-/** Return a clickable site URL only if the value actually looks like one. */
-function siteUrl(s: string | null | undefined): string | null {
-  if (!s) return null;
-  const t = s.trim();
-  if (/\s/.test(t)) return null; // captions/disclaimers contain spaces
-  if (/^https?:\/\//i.test(t)) return t;
-  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+/i.test(t)) return "https://" + t;
-  return null;
 }
 
 /** Pill-styled native dropdown for the advanced filter bar. */
@@ -84,7 +75,7 @@ function FilterSelect({
  * (crawled page_screenshot_url, else a thum.io shot of the destination).
  */
 function FacebookAdPreview({ ad }: { ad: AdRow }) {
-  const abs = siteUrl(ad.destination_url);
+  const abs = toSiteUrl(ad.destination_url);
   const previewImg =
     ad.page_screenshot_url ||
     (abs ? `https://image.thum.io/get/width/600/crop/380/noanimate/${encodeURIComponent(abs)}` : null);
@@ -132,7 +123,7 @@ function FacebookAdPreview({ ad }: { ad: AdRow }) {
           </p>
           {abs && (
             <p className="truncate text-[11px] uppercase tracking-wide text-[var(--color-ink-muted)]">
-              {abs.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}
+              {toDomain(ad.destination_url)}
             </p>
           )}
         </div>
@@ -180,7 +171,10 @@ export default function SourceClient({
   const byId = useMemo(() => new Map(creatives.map((c) => [c.id, c])), [creatives]);
 
   function runSearch() {
-    if (!query.trim()) return;
+    if (!query.trim()) {
+      setNote("Type a keyword (brand, product, or offer) to search Meta — the filters below refine it.");
+      return;
+    }
     setNote(null);
     startTransition(async () => {
       const r = await searchAds(query.trim(), { country, status, media, windowDays, platform });
@@ -222,7 +216,11 @@ export default function SourceClient({
     }
     const n = (r.data as { meta?: { total_fetched?: number } } | undefined)?.meta?.total_fetched ?? 0;
     setAdvDetail(null);
-    setNote(`Pulled ${n} of their ads into the app.`);
+    setNote(
+      n > 0
+        ? `Pulled ${n} of their ad${n === 1 ? "" : "s"} into the app.`
+        : "No new ads found for this brand on Meta right now — it may have paused them, or the keyword index hasn't caught them yet.",
+    );
     router.refresh();
   }
 
@@ -553,7 +551,7 @@ export default function SourceClient({
               )}
               {advDetail.page_id && (
                 <a
-                  href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${advDetail.page_id}`}
+                  href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&view_all_page_id=${advDetail.page_id}`}
                   target="_blank"
                   rel="noreferrer"
                   className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3 text-[14px] font-bold"
@@ -669,9 +667,9 @@ export default function SourceClient({
                   <ExternalLink size={14} /> View ad on Meta
                 </a>
               )}
-              {siteUrl(detail.destination_url) && (
+              {toSiteUrl(detail.destination_url) && (
                 <a
-                  href={siteUrl(detail.destination_url) as string}
+                  href={toSiteUrl(detail.destination_url) as string}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
@@ -680,7 +678,7 @@ export default function SourceClient({
                 </a>
               )}
             </div>
-            {detail.destination_url && !siteUrl(detail.destination_url) && (
+            {detail.destination_url && !toSiteUrl(detail.destination_url) && (
               <p className="-mt-1 text-[11.5px] text-[var(--color-ink-muted)]">
                 Ad caption: “{detail.destination_url}” — open it on Meta to see the real destination.
               </p>

@@ -1,5 +1,6 @@
 import "server-only";
 import { getServiceClient } from "@/lib/supabase/server";
+import { toDomain } from "@/lib/url";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Server-only read layer for the factory screens. Every function is defensive:
@@ -111,7 +112,7 @@ export async function getWinningCreatives(f: AdFilters = {}): Promise<AdRow[]> {
     if (f.vertical && f.vertical !== "all") q = q.eq("vertical", f.vertical);
     const { data, error } = await q;
     if (error || !data) return [];
-    return data.map(toAdRow);
+    return dedupeByMetaId(data.map(toAdRow));
   } catch {
     return [];
   }
@@ -126,7 +127,18 @@ export type ScaledWinner = {
   maxDays: number;
 };
 
-const looksLikeUrl = (s: string | null) => !!s && !/\s/.test(s.trim()) && /\.[a-z]{2,}/i.test(s);
+/** Drop re-ingested duplicate ads (same meta_ad_id from re-running searches). */
+function dedupeByMetaId(rows: AdRow[]): AdRow[] {
+  const seen = new Set<string>();
+  const out: AdRow[] = [];
+  for (const r of rows) {
+    const k = r.meta_ad_id || r.id;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
+}
 
 /**
  * "Scaled winners" — creatives DUPLICATED across many ads / landing pages.
@@ -134,54 +146,100 @@ const looksLikeUrl = (s: string | null) => !!s && !/\s/.test(s.trim()) && /\.[a-
  * creative works is that an operator is running it over and over. Groups
  * spy_ads by ad copy and ranks by (ad count + landing-page spread + longevity).
  */
+// Only the fields the grouping/ranking needs — keeps the wide 1500-row scan
+// off the heavy text columns (ad_body excerpt is enough; page_ai_summary,
+// offer/pricing copy, and screenshots are only hydrated for the few reps shown).
+const SCALED_GROUP_COLS =
+  "id, meta_ad_id, ad_body, destination_url, page_name, winner_score, days_running";
+
+type ScaledGroupRow = {
+  id: string;
+  meta_ad_id: string | null;
+  ad_body: string | null;
+  destination_url: string | null;
+  page_name: string | null;
+  winner_score: number | null;
+  days_running: number | null;
+};
+
 export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
   try {
     const sb = getServiceClient();
     const { data, error } = await sb
       .from("spy_ads")
-      .select(AD_COLS)
+      .select(SCALED_GROUP_COLS)
       .order("created_at", { ascending: false })
       .limit(1500);
     if (error || !data) return [];
-    const rows = data.map(toAdRow);
 
-    const groups = new Map<string, { ads: AdRow[]; pages: Set<string>; advs: Set<string> }>();
+    // Dedupe re-ingested ads (same meta_ad_id) before grouping.
+    const seen = new Set<string>();
+    const rows = (data as ScaledGroupRow[]).filter((r) => {
+      const k = r.meta_ad_id || r.id;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    const groups = new Map<
+      string,
+      { repId: string; repScore: number; repDays: number; count: number; pages: Set<string>; advs: Set<string>; maxDays: number }
+    >();
     for (const r of rows) {
       const body = (r.ad_body || "").toLowerCase().replace(/\s+/g, " ").trim();
       if (body.length < 20) continue;
       const key = body.slice(0, 140);
+      const score = r.winner_score ?? 0;
+      const days = r.days_running ?? 0;
       let g = groups.get(key);
       if (!g) {
-        g = { ads: [], pages: new Set(), advs: new Set() };
+        g = { repId: r.id, repScore: score, repDays: days, count: 0, pages: new Set(), advs: new Set(), maxDays: 0 };
         groups.set(key, g);
       }
-      g.ads.push(r);
-      if (looksLikeUrl(r.destination_url)) {
-        g.pages.add(r.destination_url!.replace(/^https?:\/\//, "").replace(/\/.*$/, ""));
+      g.count += 1;
+      if (score > g.repScore || (score === g.repScore && days > g.repDays)) {
+        g.repId = r.id;
+        g.repScore = score;
+        g.repDays = days;
       }
+      if (days > g.maxDays) g.maxDays = days;
+      const dom = toDomain(r.destination_url);
+      if (dom) g.pages.add(dom);
       if (r.page_name) g.advs.add(r.page_name);
     }
 
-    const out: ScaledWinner[] = [];
-    for (const [key, g] of groups) {
-      if (g.ads.length < 2) continue; // only creatives an operator is duplicating
-      const rep = g.ads
-        .slice()
-        .sort((a, b) => b.winner_score - a.winner_score || b.days_running - a.days_running)[0];
-      out.push({
+    // Rank groups, keep only duplicated creatives, take the top `limit`.
+    const ranked = [...groups.entries()]
+      .filter(([, g]) => g.count >= 2) // only creatives an operator is duplicating
+      .map(([key, g]) => ({
         key,
-        ad: rep,
-        adCount: g.ads.length,
+        repId: g.repId,
+        adCount: g.count,
         landingPages: g.pages.size,
         advertisers: g.advs.size,
-        maxDays: Math.max(...g.ads.map((a) => a.days_running)),
-      });
-    }
-    out.sort(
-      (a, b) =>
-        b.adCount + b.landingPages * 2 + b.maxDays * 0.1 - (a.adCount + a.landingPages * 2 + a.maxDays * 0.1)
-    );
-    return out.slice(0, limit);
+        maxDays: g.maxDays,
+      }))
+      .sort(
+        (a, b) =>
+          b.adCount + b.landingPages * 2 + b.maxDays * 0.1 - (a.adCount + a.landingPages * 2 + a.maxDays * 0.1)
+      )
+      .slice(0, limit);
+    if (ranked.length === 0) return [];
+
+    // Hydrate full ad rows only for the handful of representatives we'll render.
+    const { data: repData } = await sb
+      .from("spy_ads")
+      .select(AD_COLS)
+      .in("id", ranked.map((r) => r.repId));
+    const byId = new Map<string, AdRow>((repData ?? []).map((a) => [String((a as { id: string }).id), toAdRow(a)]));
+
+    return ranked
+      .map((r) => {
+        const ad = byId.get(r.repId);
+        if (!ad) return null;
+        return { key: r.key, ad, adCount: r.adCount, landingPages: r.landingPages, advertisers: r.advertisers, maxDays: r.maxDays };
+      })
+      .filter((x): x is ScaledWinner => x !== null);
   } catch {
     return [];
   }
