@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Search, ArrowRight, Sparkles } from "lucide-react";
 import { Card, WinnerBadge } from "@/components/ui";
 import { getHomeStats, getWinningCreatives, getGeneratedCreatives } from "@/lib/data";
-import { compact } from "@/lib/format";
+import { compact, money, initials } from "@/lib/format";
 import LatestVideos from "./LatestVideos";
 
 export const dynamic = "force-dynamic";
@@ -80,7 +80,7 @@ export default async function HomePage() {
           {winners.map((w) => (
             <Link key={w.id} href={`/decode?ad=${w.id}`}>
               <Card className="overflow-hidden p-0 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]">
-                <div className="aspect-[4/3] w-full bg-[var(--color-surface-2)]">
+                <div className="aspect-[4/3] w-full overflow-hidden">
                   {w.page_screenshot_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -89,19 +89,28 @@ export default async function HomePage() {
                       className="h-full w-full object-cover object-top"
                     />
                   ) : (
-                    <div className="grid h-full w-full place-items-center text-[12px] text-[var(--color-ink-muted)]">
-                      no preview
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)]">
+                      <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-[16px] font-extrabold text-[var(--color-accent)] shadow-sm">
+                        {initials(w.page_name)}
+                      </span>
+                      <span className="text-[10px] font-semibold text-[var(--color-ink-muted)]">
+                        Decode for preview
+                      </span>
                     </div>
                   )}
                 </div>
                 <div className="p-2.5">
                   <p className="truncate text-[12.5px] font-bold">{w.page_name || "Unknown"}</p>
-                  <div className="mt-1.5 flex items-center justify-between gap-1">
+                  <div className="mt-1 flex items-center justify-between gap-1">
                     <WinnerBadge badge={w.badge} />
                     <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--color-source)" }}>
                       {Math.round(w.winner_score)}
                     </span>
                   </div>
+                  <p className="mt-1 text-[10.5px] text-[var(--color-ink-muted)]">
+                    {w.days_running}d running
+                    {money(w.spend_lower, w.spend_upper) !== "—" ? ` · ${money(w.spend_lower, w.spend_upper)}` : ""}
+                  </p>
                 </div>
               </Card>
             </Link>
