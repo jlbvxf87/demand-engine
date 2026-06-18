@@ -16,8 +16,8 @@ import {
 import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { toSiteUrl, toDomain } from "@/lib/url";
-import { adHook } from "@/lib/ad";
-import { searchAds, fetchCreative, searchByPage } from "@/app/actions";
+import { adHook, metaAdUrl } from "@/lib/ad";
+import { searchAds, fetchCreative, searchByPage, loadCreatives } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
@@ -33,11 +33,6 @@ const COUNTRIES = [
   { value: "IN", label: "India" },
   { value: "MX", label: "Mexico" },
 ];
-
-/** Public Meta Ad Library page for an ad (no token, viewable by anyone). */
-function metaAdUrl(metaAdId: string | null) {
-  return metaAdId ? `https://www.facebook.com/ads/library/?id=${metaAdId}` : null;
-}
 
 /** Pill-styled native dropdown for the advanced filter bar. */
 function FilterSelect({
@@ -146,12 +141,14 @@ export default function SourceClient({
   identity,
   scaled,
   verticals,
+  creativesTotal,
 }: {
   advertisers: Advertiser[];
   creatives: AdRow[];
   identity: IdentityRollup[];
   scaled: ScaledWinner[];
   verticals: string[];
+  creativesTotal: number;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState("scaled");
@@ -166,14 +163,30 @@ export default function SourceClient({
   const [advDetail, setAdvDetail] = useState<Advertiser | null>(null);
   const [loadingCreative, setLoadingCreative] = useState(false);
   const [pullingAds, setPullingAds] = useState(false);
+  const [extraCreatives, setExtraCreatives] = useState<AdRow[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
   const vFilter = (v: string | null) => vertical === "all" || v === vertical;
 
+  // creatives prop (top 60) + any pages loaded via "Load more"
+  const allCreatives = useMemo(() => [...creatives, ...extraCreatives], [creatives, extraCreatives]);
   const adv = useMemo(() => advertisers.filter((a) => vFilter(a.vertical)), [advertisers, vertical]);
-  const crv = useMemo(() => creatives.filter((a) => vFilter(a.vertical)), [creatives, vertical]);
-  const byId = useMemo(() => new Map(creatives.map((c) => [c.id, c])), [creatives]);
+  const crv = useMemo(() => allCreatives.filter((a) => vFilter(a.vertical)), [allCreatives, vertical]);
+  const byId = useMemo(() => new Map(allCreatives.map((c) => [c.id, c])), [allCreatives]);
+  const moreAvailable = allCreatives.length < creativesTotal && !exhausted;
+
+  async function loadMoreCreatives() {
+    setLoadingMore(true);
+    const r = await loadCreatives(allCreatives.length, 60);
+    setLoadingMore(false);
+    if (r.ok && r.rows) {
+      if (r.rows.length === 0) setExhausted(true);
+      else setExtraCreatives((prev) => [...prev, ...r.rows!]);
+    }
+  }
 
   function runSearch() {
     if (!query.trim()) {
@@ -476,6 +489,10 @@ export default function SourceClient({
           <EmptyState icon={Search} title="No creatives yet" hint="Run a search to populate winners." />
         ) : (
           <div className="flex flex-col gap-3">
+            <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
+              Showing {crv.length.toLocaleString()} of {creativesTotal.toLocaleString()} ads
+              {vertical !== "all" ? " (filtered)" : ""} — highest winner score first.
+            </p>
             {crv.map((c) => {
               const on = detail?.id === c.id;
               const hook = adHook(c.ad_body, c.ad_title, c.page_headline);
@@ -523,6 +540,25 @@ export default function SourceClient({
                 </Card>
               );
             })}
+            {moreAvailable ? (
+              <button
+                onClick={loadMoreCreatives}
+                disabled={loadingMore}
+                className="mt-1 flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3 text-[13.5px] font-bold disabled:opacity-60"
+              >
+                {loadingMore ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" /> Loading more…
+                  </>
+                ) : (
+                  `Load more (${(creativesTotal - allCreatives.length).toLocaleString()} more)`
+                )}
+              </button>
+            ) : (
+              <p className="py-1 text-center text-[11.5px] text-[var(--color-ink-muted)]">
+                That’s all {creativesTotal.toLocaleString()} ads.
+              </p>
+            )}
           </div>
         ))}
 

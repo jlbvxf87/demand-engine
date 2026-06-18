@@ -99,23 +99,37 @@ function toAdRow(a: Record<string, unknown>): AdRow {
 export type AdFilters = {
   vertical?: string;
   limit?: number;
+  offset?: number; // for "Load more" paging through every result
 };
 
 /** Individual winning creatives, highest winner_score first (Source > Creatives tab). */
 export async function getWinningCreatives(f: AdFilters = {}): Promise<AdRow[]> {
   try {
     const sb = getServiceClient();
+    const limit = f.limit ?? 60;
+    const offset = f.offset ?? 0;
     let q = sb
       .from("spy_ads")
       .select(AD_COLS)
       .order("winner_score", { ascending: false })
-      .limit(f.limit ?? 60);
+      .range(offset, offset + limit - 1);
     if (f.vertical && f.vertical !== "all") q = q.eq("vertical", f.vertical);
     const { data, error } = await q;
     if (error || !data) return [];
     return dedupeByMetaId(data.map(toAdRow));
   } catch {
     return [];
+  }
+}
+
+/** Total ad count (for the "Showing N of M" pager in Source > Creatives). */
+export async function getCreativesCount(): Promise<number> {
+  try {
+    const sb = getServiceClient();
+    const { count } = await sb.from("spy_ads").select("id", { count: "exact", head: true });
+    return count ?? 0;
+  } catch {
+    return 0;
   }
 }
 

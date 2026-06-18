@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
+import { getWinningCreatives, type AdRow } from "@/lib/data";
 import Anthropic from "@anthropic-ai/sdk";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
@@ -96,6 +97,19 @@ export async function searchByPage(pageId: string): Promise<ActionResult> {
   const r = await callRoute("/api/spy/search", { search_page_ids: pageId });
   if (r.ok) revalidatePath("/source");
   return r;
+}
+
+/** Source > Creatives: page through every ad in the library ("Load more"). */
+export async function loadCreatives(
+  offset: number,
+  limit = 60
+): Promise<{ ok: boolean; rows?: AdRow[] }> {
+  try {
+    const rows = await getWinningCreatives({ offset, limit });
+    return { ok: true, rows };
+  } catch {
+    return { ok: false };
+  }
 }
 
 /** Source: scrape the real ad creative (fbcdn media) for an ad via the scraper. */

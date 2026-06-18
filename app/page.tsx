@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { Search, ArrowRight, Sparkles } from "lucide-react";
+import { Search, ArrowRight, Sparkles, ExternalLink } from "lucide-react";
 import { Card, WinnerBadge } from "@/components/ui";
 import { getHomeStats, getWinningCreatives, getGeneratedCreatives } from "@/lib/data";
 import { compact, money, initials } from "@/lib/format";
 import { toDomain } from "@/lib/url";
+import { adHook, metaAdUrl } from "@/lib/ad";
 import LatestVideos from "./LatestVideos";
 
 export const dynamic = "force-dynamic";
@@ -16,11 +17,21 @@ const STAT_ACCENT = [
 ];
 
 export default async function HomePage() {
-  const [stats, winners, creatives] = await Promise.all([
+  const [stats, winnersRaw, creatives] = await Promise.all([
     getHomeStats(),
-    getWinningCreatives({ limit: 6 }),
+    getWinningCreatives({ limit: 60 }),
     getGeneratedCreatives(12),
   ]);
+  // One top ad per brand so the grid shows variety, not 6 of the same advertiser.
+  const seenBrand = new Set<string>();
+  const winners = winnersRaw
+    .filter((w) => {
+      const b = (w.page_name || w.id).toLowerCase();
+      if (seenBrand.has(b)) return false;
+      seenBrand.add(b);
+      return true;
+    })
+    .slice(0, 6);
   const videos = creatives.filter((c) => c.video_url).slice(0, 6);
 
   const tiles = [
@@ -78,49 +89,70 @@ export default async function HomePage() {
         />
       ) : (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {winners.map((w) => (
-            <Link key={w.id} href={`/decode?ad=${w.id}`}>
-              <Card className="overflow-hidden p-0 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]">
-                <div className="aspect-[4/3] w-full overflow-hidden">
-                  {w.page_screenshot_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={w.page_screenshot_url}
-                      alt={w.page_name || "ad"}
-                      className="h-full w-full object-cover object-top"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)]">
-                      <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-[16px] font-extrabold text-[var(--color-accent)] shadow-sm">
-                        {initials(w.page_name)}
-                      </span>
-                      <span className="text-[10px] font-semibold text-[var(--color-ink-muted)]">
-                        Decode for preview
+          {winners.map((w) => {
+            const hook = adHook(w.ad_body, w.ad_title, w.page_headline);
+            const meta = metaAdUrl(w.meta_ad_id);
+            const dom = toDomain(w.destination_url);
+            return (
+              <Card key={w.id} className="overflow-hidden p-0 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]">
+                {/* Tap the ad → open the real, live ad on Meta (like Source) */}
+                <a href={meta ?? "#"} target="_blank" rel="noreferrer" className="block">
+                  <div className="aspect-[4/3] w-full overflow-hidden">
+                    {w.creative_media_url ? (
+                      w.creative_media_type === "video" ? (
+                        // eslint-disable-next-line jsx-a11y/media-has-caption
+                        <video src={`${w.creative_media_url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full bg-black object-cover" />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={w.creative_media_url} alt={w.page_name || "ad"} className="h-full w-full bg-black object-cover" />
+                      )
+                    ) : w.page_screenshot_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={w.page_screenshot_url} alt={w.page_name || "ad"} className="h-full w-full object-cover object-top" />
+                    ) : hook ? (
+                      // No image from Meta — show the real hook so the card still has value
+                      <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)] p-2.5">
+                        <span className="line-clamp-4 text-[11px] font-semibold leading-snug">{hook}</span>
+                        <span className="flex items-center gap-1 text-[9.5px] font-bold text-[var(--color-source)]">
+                          <ExternalLink size={11} /> View on Meta
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)]">
+                        <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-[16px] font-extrabold text-[var(--color-accent)] shadow-sm">
+                          {initials(w.page_name)}
+                        </span>
+                        <span className="flex items-center gap-1 text-[9.5px] font-bold text-[var(--color-source)]">
+                          <ExternalLink size={11} /> View on Meta
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="px-2.5 pb-1.5 pt-2.5">
+                    <p className="truncate text-[12.5px] font-bold">{w.page_name || "Unknown"}</p>
+                    {dom && <p className="truncate text-[10px] text-[var(--color-ink-muted)]">{dom}</p>}
+                    <div className="mt-1 flex items-center justify-between gap-1">
+                      <WinnerBadge badge={w.badge} />
+                      <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--color-source)" }}>
+                        {Math.round(w.winner_score)}
                       </span>
                     </div>
-                  )}
-                </div>
-                <div className="p-2.5">
-                  <p className="truncate text-[12.5px] font-bold">{w.page_name || "Unknown"}</p>
-                  {toDomain(w.destination_url) && (
-                    <p className="truncate text-[10px] text-[var(--color-ink-muted)]">
-                      {toDomain(w.destination_url)}
+                    <p className="mt-1 text-[10.5px] text-[var(--color-ink-muted)]">
+                      {w.days_running}d running
+                      {(w.spend_lower ?? 0) > 0 || (w.spend_upper ?? 0) > 0 ? ` · ${money(w.spend_lower, w.spend_upper)}` : ""}
                     </p>
-                  )}
-                  <div className="mt-1 flex items-center justify-between gap-1">
-                    <WinnerBadge badge={w.badge} />
-                    <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--color-source)" }}>
-                      {Math.round(w.winner_score)}
-                    </span>
                   </div>
-                  <p className="mt-1 text-[10.5px] text-[var(--color-ink-muted)]">
-                    {w.days_running}d running
-                    {(w.spend_lower ?? 0) > 0 || (w.spend_upper ?? 0) > 0 ? ` · ${money(w.spend_lower, w.spend_upper)}` : ""}
-                  </p>
-                </div>
+                </a>
+                {/* Secondary: decode why it works */}
+                <Link
+                  href={`/decode?ad=${w.id}`}
+                  className="flex items-center justify-center gap-1 border-t border-[var(--color-line)] py-1.5 text-[11px] font-bold text-[var(--color-decode)]"
+                >
+                  Decode <ArrowRight size={12} />
+                </Link>
               </Card>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       )}
 

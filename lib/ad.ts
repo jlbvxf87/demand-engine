@@ -31,3 +31,8 @@ export function adHook(...candidates: (string | null | undefined)[]): string | n
   }
   return null;
 }
+
+/** Public Meta Ad Library deep link for a single ad — no token, anyone can view it. */
+export function metaAdUrl(metaAdId: string | null | undefined): string | null {
+  return metaAdId ? `https://www.facebook.com/ads/library/?id=${metaAdId}` : null;
+}
