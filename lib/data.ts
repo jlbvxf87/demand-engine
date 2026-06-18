@@ -1,6 +1,7 @@
 import "server-only";
 import { getServiceClient } from "@/lib/supabase/server";
 import { toDomain } from "@/lib/url";
+import { adHook, isBoilerplate } from "@/lib/ad";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Server-only read layer for the factory screens. Every function is defensive:
@@ -186,6 +187,7 @@ export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
       { repId: string; repScore: number; repDays: number; count: number; pages: Set<string>; advs: Set<string>; maxDays: number }
     >();
     for (const r of rows) {
+      if (isBoilerplate(r.ad_body)) continue; // Meta disclaimer, not a real creative
       const body = (r.ad_body || "").toLowerCase().replace(/\s+/g, " ").trim();
       if (body.length < 20) continue;
       const key = body.slice(0, 140);
@@ -253,6 +255,7 @@ export type Advertiser = {
   badge: WinnerBadge;
   vertical: string | null;
   topCreative: string | null;
+  topDomain: string | null; // where their top ad sends — the clearest "what's the product" signal
   topCreativeId: string | null;
   isPersona: boolean;
 };
@@ -274,7 +277,8 @@ export async function getTopAdvertisers(f: AdFilters = {}): Promise<Advertiser[]
         maxScore: a.winner_score,
         badge: a.badge,
         vertical: a.vertical,
-        topCreative: a.ad_title || a.page_headline,
+        topCreative: adHook(a.ad_body, a.ad_title, a.page_headline),
+        topDomain: toDomain(a.destination_url) || null,
         topCreativeId: a.id,
         isPersona: PERSONA_RE.test(name),
       });
@@ -283,7 +287,8 @@ export async function getTopAdvertisers(f: AdFilters = {}): Promise<Advertiser[]
       if (a.winner_score > cur.maxScore) {
         cur.maxScore = a.winner_score;
         cur.badge = a.badge;
-        cur.topCreative = a.ad_title || a.page_headline;
+        cur.topCreative = adHook(a.ad_body, a.ad_title, a.page_headline);
+        cur.topDomain = toDomain(a.destination_url) || null;
         cur.topCreativeId = a.id;
       }
     }

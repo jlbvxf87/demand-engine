@@ -16,6 +16,7 @@ import {
 import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { toSiteUrl, toDomain } from "@/lib/url";
+import { adHook } from "@/lib/ad";
 import { searchAds, fetchCreative, searchByPage } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
@@ -76,6 +77,7 @@ function FilterSelect({
  */
 function FacebookAdPreview({ ad }: { ad: AdRow }) {
   const abs = toSiteUrl(ad.destination_url);
+  const hook = adHook(ad.ad_body, ad.ad_title, ad.page_headline);
   const previewImg =
     ad.page_screenshot_url ||
     (abs ? `https://image.thum.io/get/width/600/crop/380/noanimate/${encodeURIComponent(abs)}` : null);
@@ -90,9 +92,12 @@ function FacebookAdPreview({ ad }: { ad: AdRow }) {
           <p className="text-[11px] text-[var(--color-ink-muted)]">Sponsored · {ad.days_running}d running</p>
         </div>
       </div>
-      {ad.ad_body && (
-        <p className="whitespace-pre-wrap px-3 pb-2 pt-2 text-[13px] leading-relaxed line-clamp-6">
-          {ad.ad_body}
+      {hook ? (
+        <p className="whitespace-pre-wrap px-3 pb-2 pt-2 text-[13px] leading-relaxed line-clamp-6">{hook}</p>
+      ) : (
+        <p className="px-3 pb-2 pt-2 text-[12.5px] italic leading-relaxed text-[var(--color-ink-muted)]">
+          Meta doesn’t expose this ad’s copy (it’s disabled or undisclosed). Open the real ad on Meta, or
+          “Load real creative” below to pull the actual image/video.
         </p>
       )}
       {ad.creative_media_url ? (
@@ -344,24 +349,69 @@ export default function SourceClient({
             <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
               Creatives an operator is running over and over — the strongest “this works” signal.
             </p>
-            {scaled.map((w) => (
-              <button
-                key={w.key}
-                onClick={() => setDetail(w.ad)}
-                className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] p-3.5 text-left shadow-[0_1px_2px_rgba(16,21,27,0.03),0_10px_28px_-16px_rgba(16,21,27,0.12)] transition-all duration-200 hover:-translate-y-0.5"
-              >
-                <p className="line-clamp-3 text-[13px] font-semibold leading-snug">
-                  {w.ad.ad_body || w.ad.ad_title || w.ad.page_headline}
-                </p>
-                <p className="truncate text-[11.5px] text-[var(--color-ink-muted)]">{w.ad.page_name}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge tone="source">{w.adCount}× ads</Badge>
-                  {w.landingPages > 1 && <Badge tone="neutral">{w.landingPages} landing pages</Badge>}
-                  {w.advertisers > 1 && <Badge tone="neutral">{w.advertisers} advertisers</Badge>}
-                  <Badge tone="neutral">{w.maxDays}d</Badge>
+            {scaled.map((w) => {
+              const hook = adHook(w.ad.ad_body, w.ad.ad_title, w.ad.page_headline);
+              const dom = toDomain(w.ad.destination_url);
+              const meta = metaAdUrl(w.ad.meta_ad_id);
+              return (
+                <div
+                  key={w.key}
+                  className="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[0_1px_2px_rgba(16,21,27,0.03),0_10px_28px_-16px_rgba(16,21,27,0.12)] transition-all duration-200 hover:-translate-y-0.5"
+                >
+                  <button onClick={() => setDetail(w.ad)} className="flex flex-col gap-2 p-3.5 text-left">
+                    {/* Brand + product */}
+                    <div className="flex items-center gap-2.5">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--color-accent-soft)] text-[12px] font-extrabold text-[var(--color-accent)]">
+                        {initials(w.ad.page_name)}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[13.5px] font-bold">{w.ad.page_name || "Advertiser"}</p>
+                        <p className="truncate text-[11.5px] text-[var(--color-ink-muted)]">
+                          {dom ? `sells via ${dom}` : "destination not public"}
+                        </p>
+                      </div>
+                    </div>
+                    {/* Real creative hook */}
+                    {hook ? (
+                      <p className="line-clamp-3 text-[13px] leading-snug">{hook}</p>
+                    ) : (
+                      <p className="text-[12.5px] italic text-[var(--color-ink-muted)]">
+                        Copy not public — open the real ad to see the creative.
+                      </p>
+                    )}
+                    {/* Proof of scale */}
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge tone="source">{w.adCount}× ads</Badge>
+                      {w.landingPages > 1 && <Badge tone="neutral">{w.landingPages} landing pages</Badge>}
+                      {w.advertisers > 1 && <Badge tone="neutral">{w.advertisers} advertisers</Badge>}
+                      <Badge tone="neutral">{w.maxDays}d live</Badge>
+                    </div>
+                  </button>
+                  {/* Footer actions (anchor kept outside the button) */}
+                  <div className="flex items-center justify-between gap-2 border-t border-[var(--color-line)] px-3.5 py-2">
+                    {meta ? (
+                      <a
+                        href={meta}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[12.5px] font-bold"
+                        style={{ color: ACCENT }}
+                      >
+                        <ExternalLink size={14} /> Open real ad on Meta
+                      </a>
+                    ) : (
+                      <span className="text-[12px] text-[var(--color-ink-muted)]">No Meta link</span>
+                    )}
+                    <button
+                      onClick={() => setDetail(w.ad)}
+                      className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-[var(--color-ink-muted)]"
+                    >
+                      Inspect <ArrowRight size={14} />
+                    </button>
+                  </div>
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         ))}
 
@@ -396,7 +446,7 @@ export default function SourceClient({
                         )}
                       </span>
                       <span className="block truncate text-[11px] text-[var(--color-ink-muted)]">
-                        {verticalLabel(a.vertical)}
+                        {a.topDomain || "destination not public"}
                       </span>
                     </div>
                   </div>
@@ -428,6 +478,9 @@ export default function SourceClient({
           <div className="flex flex-col gap-3">
             {crv.map((c) => {
               const on = detail?.id === c.id;
+              const hook = adHook(c.ad_body, c.ad_title, c.page_headline);
+              const dom = toDomain(c.destination_url);
+              const meta = metaAdUrl(c.meta_ad_id);
               return (
                 <Card
                   key={c.id}
@@ -435,16 +488,18 @@ export default function SourceClient({
                   accent={on ? ACCENT : undefined}
                 >
                   <AdThumb src={c.page_screenshot_url} name={c.page_name} size={56} />
-                  <button
-                    onClick={() => setDetail(c)}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <p className="truncate text-[14px] font-bold">
-                      {c.ad_title || c.page_headline || "Untitled creative"}
-                    </p>
+                  <button onClick={() => setDetail(c)} className="min-w-0 flex-1 text-left">
+                    <p className="truncate text-[14px] font-bold">{c.page_name || "Advertiser"}</p>
                     <p className="truncate text-[12px] text-[var(--color-ink-muted)]">
-                      {c.page_name} · running {c.days_running}d
+                      {dom || "destination not public"} · {c.days_running}d
                     </p>
+                    {hook ? (
+                      <p className="mt-0.5 line-clamp-1 text-[12px]">{hook}</p>
+                    ) : (
+                      <p className="mt-0.5 truncate text-[12px] italic text-[var(--color-ink-muted)]">
+                        copy not public — open on Meta
+                      </p>
+                    )}
                     <div className="mt-1.5 flex items-center gap-2">
                       <WinnerBadge badge={c.badge} />
                       <span className="text-[11.5px] font-semibold text-[var(--color-ink-muted)]">
@@ -452,15 +507,17 @@ export default function SourceClient({
                       </span>
                     </div>
                   </button>
-                  {c.meta_ad_id && (
+                  {meta && (
                     <a
-                      href={metaAdUrl(c.meta_ad_id) as string}
+                      href={meta}
                       target="_blank"
                       rel="noreferrer"
-                      className="shrink-0 text-[var(--color-ink-muted)]"
-                      title="View ad on Meta"
+                      className="flex shrink-0 flex-col items-center gap-0.5"
+                      title="Open the real ad on Meta"
+                      style={{ color: ACCENT }}
                     >
-                      <ExternalLink size={16} />
+                      <ExternalLink size={18} />
+                      <span className="text-[9px] font-bold">Meta</span>
                     </a>
                   )}
                 </Card>
@@ -523,11 +580,18 @@ export default function SourceClient({
       >
         {advDetail && (
           <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <Stat label="Ads found" value={advDetail.activeAds} accent={ACCENT} />
-              <Stat label="Winner" value={Math.round(advDetail.maxScore)} />
-              <Stat label="Vertical" value={verticalLabel(advDetail.vertical)} />
+              <Stat label="Winner score" value={Math.round(advDetail.maxScore)} />
             </div>
+            {advDetail.topDomain && (
+              <div className="rounded-xl border border-[var(--color-line)] px-3.5 py-2.5 text-[13px]">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                  Product
+                </span>
+                <p className="font-semibold">sells via {advDetail.topDomain}</p>
+              </div>
+            )}
             <p className="text-[12.5px] text-[var(--color-ink-muted)]">
               We sampled {advDetail.activeAds} of this advertiser&apos;s ads in your search. Open their
               full Meta Ad Library to see every ad and the live creatives.
@@ -601,6 +665,19 @@ export default function SourceClient({
             {/* Reconstructed Facebook ad (v1 parity) */}
             <FacebookAdPreview ad={detail} />
 
+            {/* Open the real, live ad on Meta — the primary "see what actually ran" action */}
+            {metaAdUrl(detail.meta_ad_id) && (
+              <a
+                href={metaAdUrl(detail.meta_ad_id) as string}
+                target="_blank"
+                rel="noreferrer"
+                className="flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white active:scale-[0.99]"
+                style={{ background: ACCENT }}
+              >
+                <ExternalLink size={17} /> Open the real ad on Meta
+              </a>
+            )}
+
             {!detail.creative_media_url && (
               <button
                 onClick={loadCreative}
@@ -612,7 +689,7 @@ export default function SourceClient({
                     <Loader2 size={15} className="animate-spin" /> Pulling the real creative…
                   </>
                 ) : (
-                  "Load real creative"
+                  "Load real creative (image / video)"
                 )}
               </button>
             )}
@@ -654,30 +731,17 @@ export default function SourceClient({
               </div>
             )}
 
-            {/* External links */}
-            <div className="flex flex-wrap gap-2">
-              {detail.meta_ad_id && (
-                <a
-                  href={metaAdUrl(detail.meta_ad_id) as string}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[12.5px] font-semibold text-white"
-                  style={{ background: ACCENT }}
-                >
-                  <ExternalLink size={14} /> View ad on Meta
-                </a>
-              )}
-              {toSiteUrl(detail.destination_url) && (
-                <a
-                  href={toSiteUrl(detail.destination_url) as string}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
-                >
-                  <ExternalLink size={14} /> Visit site
-                </a>
-              )}
-            </div>
+            {/* Visit the landing page (the Meta link is the primary action above) */}
+            {toSiteUrl(detail.destination_url) && (
+              <a
+                href={toSiteUrl(detail.destination_url) as string}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-fit items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
+              >
+                <ExternalLink size={14} /> Visit landing page ({toDomain(detail.destination_url)})
+              </a>
+            )}
             {detail.destination_url && !toSiteUrl(detail.destination_url) && (
               <p className="-mt-1 text-[11.5px] text-[var(--color-ink-muted)]">
                 Ad caption: “{detail.destination_url}” — open it on Meta to see the real destination.

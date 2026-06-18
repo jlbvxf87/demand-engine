@@ -3,6 +3,7 @@ import { Search, ArrowRight, Sparkles } from "lucide-react";
 import { Card, WinnerBadge } from "@/components/ui";
 import { getHomeStats, getWinningCreatives, getGeneratedCreatives } from "@/lib/data";
 import { compact, money, initials } from "@/lib/format";
+import { toDomain } from "@/lib/url";
 import LatestVideos from "./LatestVideos";
 
 export const dynamic = "force-dynamic";
@@ -101,6 +102,11 @@ export default async function HomePage() {
                 </div>
                 <div className="p-2.5">
                   <p className="truncate text-[12.5px] font-bold">{w.page_name || "Unknown"}</p>
+                  {toDomain(w.destination_url) && (
+                    <p className="truncate text-[10px] text-[var(--color-ink-muted)]">
+                      {toDomain(w.destination_url)}
+                    </p>
+                  )}
                   <div className="mt-1 flex items-center justify-between gap-1">
                     <WinnerBadge badge={w.badge} />
                     <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--color-source)" }}>
