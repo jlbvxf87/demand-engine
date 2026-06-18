@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { Search, ArrowRight, Play, Sparkles } from "lucide-react";
+import { Search, ArrowRight, Sparkles } from "lucide-react";
 import { Card, WinnerBadge } from "@/components/ui";
 import { getHomeStats, getWinningCreatives, getGeneratedCreatives } from "@/lib/data";
 import { compact } from "@/lib/format";
-import { providerLabel } from "@/lib/video";
+import LatestVideos from "./LatestVideos";
 
 export const dynamic = "force-dynamic";
 
@@ -109,37 +109,23 @@ export default async function HomePage() {
         </div>
       )}
 
-      {/* Latest videos */}
-      <SectionHeader title="Latest videos" href="/publish" cta="Publish" />
+      {/* Latest videos — open a player in place */}
+      <SectionHeader title="Latest videos" href="/publish" cta="Create" />
       {videos.length === 0 ? (
         <Empty
           icon={<Sparkles size={22} className="text-[var(--color-ink-muted)]" />}
           title="No videos yet"
-          hint="Generate creatives in Publish (Replicate or Multi-scene)."
+          hint="Generate creatives in Create (Replicate or Multi-scene)."
         />
       ) : (
-        <div className="no-scrollbar -mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
-          {videos.map((v) => (
-            <Link key={v.id} href="/publish" className="shrink-0">
-              <div className="relative aspect-[9/16] w-28 overflow-hidden rounded-xl bg-[#10151B]">
-                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                <video
-                  src={`${v.video_url}#t=0.1`}
-                  muted
-                  playsInline
-                  preload="metadata"
-                  className="h-full w-full object-cover"
-                />
-                <span className="absolute inset-0 grid place-items-center bg-black/25">
-                  <Play size={20} className="text-white" fill="currentColor" />
-                </span>
-                <span className="absolute inset-x-1 bottom-1 truncate rounded bg-black/55 px-1 py-0.5 text-[9px] font-bold text-white">
-                  {providerLabel(v.video_provider)}
-                </span>
-              </div>
-            </Link>
-          ))}
-        </div>
+        <LatestVideos
+          videos={videos.map((v) => ({
+            id: v.id,
+            video_url: v.video_url,
+            video_provider: v.video_provider,
+            hook_text: v.hook_text,
+          }))}
+        />
       )}
     </div>
   );

@@ -6,10 +6,8 @@ import { Search, ArrowRight, ExternalLink, Loader2, CornerDownRight } from "luci
 import {
   ScreenHeader,
   Card,
-  Badge,
   WinnerBadge,
   Tabs,
-  FilterPill,
   EmptyState,
   Modal,
   Stat,
@@ -20,6 +18,48 @@ import { searchAds } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
+
+const COUNTRIES = [
+  { value: "US", label: "United States" },
+  { value: "GB", label: "United Kingdom" },
+  { value: "CA", label: "Canada" },
+  { value: "AU", label: "Australia" },
+  { value: "DE", label: "Germany" },
+  { value: "FR", label: "France" },
+  { value: "BR", label: "Brazil" },
+  { value: "IN", label: "India" },
+  { value: "MX", label: "Mexico" },
+];
+
+/** Pill-styled native dropdown for the advanced filter bar. */
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <label className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-1.5 text-[12.5px] font-semibold">
+      <span className="text-[var(--color-ink-muted)]">{label}:</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="bg-transparent font-bold text-[var(--color-ink)] outline-none"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 export default function SourceClient({
   advertisers,
@@ -36,6 +76,11 @@ export default function SourceClient({
   const [tab, setTab] = useState("advertisers");
   const [vertical, setVertical] = useState<string>("all");
   const [query, setQuery] = useState("");
+  const [country, setCountry] = useState("US");
+  const [status, setStatus] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
+  const [media, setMedia] = useState<"ALL" | "VIDEO" | "IMAGE">("ALL");
+  const [windowDays, setWindowDays] = useState(0); // 0 = any time
+  const [platform, setPlatform] = useState(""); // "" = all platforms
   const [selected, setSelected] = useState<{ id: string; name: string; sub: string } | null>(null);
   const [detail, setDetail] = useState<AdRow | null>(null);
   const [pending, startTransition] = useTransition();
@@ -58,7 +103,7 @@ export default function SourceClient({
     if (!query.trim()) return;
     setNote(null);
     startTransition(async () => {
-      const r = await searchAds(query.trim());
+      const r = await searchAds(query.trim(), { country, status, media, windowDays, platform });
       if (!r.ok) setNote(r.error || "Search failed");
       else router.refresh();
     });
@@ -102,34 +147,76 @@ export default function SourceClient({
         </p>
       )}
 
+      {/* Advanced filters — drive the Meta search */}
+      <div className="no-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
+        <FilterSelect label="Country" value={country} onChange={setCountry} options={COUNTRIES} />
+        <FilterSelect
+          label="Status"
+          value={status}
+          onChange={(v) => setStatus(v as "ACTIVE" | "ALL" | "INACTIVE")}
+          options={[
+            { value: "ACTIVE", label: "Active" },
+            { value: "ALL", label: "All" },
+            { value: "INACTIVE", label: "Inactive" },
+          ]}
+        />
+        <FilterSelect
+          label="Media"
+          value={media}
+          onChange={(v) => setMedia(v as "ALL" | "VIDEO" | "IMAGE")}
+          options={[
+            { value: "ALL", label: "All" },
+            { value: "VIDEO", label: "Video" },
+            { value: "IMAGE", label: "Image" },
+          ]}
+        />
+        <FilterSelect
+          label="Window"
+          value={String(windowDays)}
+          onChange={(v) => setWindowDays(Number(v))}
+          options={[
+            { value: "0", label: "Any time" },
+            { value: "7", label: "7 days" },
+            { value: "30", label: "30 days" },
+            { value: "90", label: "90 days" },
+          ]}
+        />
+        <FilterSelect
+          label="Platform"
+          value={platform}
+          onChange={setPlatform}
+          options={[
+            { value: "", label: "All" },
+            { value: "facebook", label: "Facebook" },
+            { value: "instagram", label: "Instagram" },
+          ]}
+        />
+        <FilterSelect
+          label="Vertical"
+          value={vertical}
+          onChange={setVertical}
+          options={[
+            { value: "all", label: "All" },
+            ...verticals.map((v) => ({ value: v, label: verticalLabel(v) })),
+          ]}
+        />
+      </div>
+      <p className="mb-4 px-1 text-[11px] text-[var(--color-ink-muted)]">
+        Set filters, then Search. Vertical filters the results shown.
+      </p>
+
       {/* Tabs */}
-      <div className="mb-3">
+      <div className="mb-4">
         <Tabs
           accent={ACCENT}
           active={tab}
           onChange={setTab}
           tabs={[
-            { id: "advertisers", label: "Advertisers" },
-            { id: "creatives", label: "Creatives" },
-            { id: "identity", label: "Identity" },
+            { id: "advertisers", label: `Advertisers${adv.length ? ` · ${adv.length}` : ""}` },
+            { id: "creatives", label: `Creatives${crv.length ? ` · ${crv.length}` : ""}` },
+            { id: "identity", label: `Identity${identity.length ? ` · ${identity.length}` : ""}` },
           ]}
         />
-      </div>
-
-      {/* Filters */}
-      <div className="no-scrollbar mb-5 flex gap-2 overflow-x-auto pb-1">
-        <FilterPill
-          label="Vertical"
-          value={vertical === "all" ? "All" : verticalLabel(vertical)}
-          onClick={() => {
-            const opts = ["all", ...verticals];
-            const i = opts.indexOf(vertical);
-            setVertical(opts[(i + 1) % opts.length]);
-          }}
-        />
-        <FilterPill label="Country" value="USA" />
-        <FilterPill label="Window" value="30 days" />
-        <FilterPill label="Badge" value="All" />
       </div>
 
       {/* ── Advertisers ─────────────────────────────────────────────────── */}

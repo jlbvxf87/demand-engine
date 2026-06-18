@@ -109,6 +109,7 @@ type SearchBody = {
    * and (on future calls) use search_page_ids for true exact-page lookup.
    */
   advertiser_alias?: string;
+  country?: string;
   ad_active_status?: 'ACTIVE' | 'ALL' | 'INACTIVE';
   media_type?: 'ALL' | 'VIDEO' | 'IMAGE' | 'NONE';
   publisher_platforms?: string[];
@@ -160,11 +161,13 @@ export async function POST(req: Request) {
   } = body;
   const {
     advertiser_alias,
+    country = 'US',
     ad_active_status = 'ACTIVE',
     media_type = 'ALL',
     publisher_platforms,
     ad_delivery_start_time_min,
   } = body;
+  const reachedCountry = (country || 'US').toUpperCase().slice(0, 2);
 
   if (!keyword?.trim() && !search_page_ids?.trim() && !advertiser_alias?.trim()) {
     return NextResponse.json(
@@ -213,7 +216,7 @@ export async function POST(req: Request) {
   // ── Build base params ──────────────────────────────────────────────────────
 
   const baseParams: Record<string, string> = {
-    ad_reached_countries: '["US"]',
+    ad_reached_countries: JSON.stringify([reachedCountry]),
     ad_active_status,
     fields: FIELDS,
     limit: String(PAGE_SIZE),

@@ -64,9 +64,25 @@ async function callRoute(path: string, body: unknown): Promise<ActionResult> {
   }
 }
 
-/** Source: pull fresh winners from the Meta Ad Library. */
-export async function searchAds(keyword: string): Promise<ActionResult> {
-  const r = await callRoute("/api/spy/search", { keyword });
+export type SearchFilters = {
+  country?: string;
+  status?: "ACTIVE" | "ALL" | "INACTIVE";
+  media?: "ALL" | "VIDEO" | "IMAGE";
+  windowDays?: number; // 0 = any time
+  platform?: string; // "" = all, else 'facebook' | 'instagram'
+};
+
+/** Source: pull fresh winners from the Meta Ad Library, with advanced filters. */
+export async function searchAds(keyword: string, filters: SearchFilters = {}): Promise<ActionResult> {
+  const body: Record<string, unknown> = { keyword };
+  if (filters.country) body.country = filters.country;
+  if (filters.status) body.ad_active_status = filters.status;
+  if (filters.media && filters.media !== "ALL") body.media_type = filters.media;
+  if (filters.platform) body.publisher_platforms = [filters.platform];
+  if (filters.windowDays && filters.windowDays > 0) {
+    body.ad_delivery_start_time_min = Math.floor(Date.now() / 1000) - filters.windowDays * 86400;
+  }
+  const r = await callRoute("/api/spy/search", body);
   if (r.ok) revalidatePath("/source");
   return r;
 }
