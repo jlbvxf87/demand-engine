@@ -2,7 +2,6 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
 import Logo from "./Logo";
 import { NAV } from "./nav";
 
@@ -46,12 +45,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className="mt-auto flex items-center justify-between rounded-xl border border-[var(--color-line)] px-3 py-2">
+        <div className="mt-auto flex items-center justify-between rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-2)] px-3 py-2.5">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-ink-muted)]">
-            <span className="inline-block h-2 w-2 rounded-full bg-[var(--color-source)]" />
-            Creative Factory
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-win)] opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--color-win)]" />
+            </span>
+            Live
           </div>
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-[var(--color-source-soft)] text-[12px] font-bold text-[var(--color-source)]">
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[12px] font-extrabold text-[var(--color-accent)]">
             JB
           </span>
         </div>
@@ -60,22 +62,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* ── Main column ─────────────────────────────────────────────────── */}
       <div className="flex min-h-dvh w-full flex-col md:pl-[240px]">
         {/* Mobile header */}
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)]/90 px-4 py-3 backdrop-blur md:hidden">
-          <div className="flex items-center gap-2">
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)]/70 px-4 py-3 backdrop-blur-xl md:hidden">
+          <div className="flex items-center gap-2.5">
             <Logo size={22} />
-            <span className="text-[16px] font-extrabold tracking-tight">
-              Demand Engine
-            </span>
+            <span className="text-[16.5px] font-extrabold tracking-[-0.02em]">Demand Engine</span>
           </div>
-          <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--color-ink)]">
-              Creative Factory
-              <ChevronDown size={13} className="text-[var(--color-ink-muted)]" />
-            </button>
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--color-source-soft)] text-[12px] font-bold text-[var(--color-source)]">
-              JB
-            </span>
-          </div>
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[12px] font-extrabold text-[var(--color-accent)] shadow-[inset_0_0_0_1px_rgba(23,46,215,0.12)]">
+            JB
+          </span>
         </header>
 
         <main
