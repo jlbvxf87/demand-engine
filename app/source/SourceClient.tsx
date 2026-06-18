@@ -341,13 +341,28 @@ export default function SourceClient({
           active={tab}
           onChange={setTab}
           tabs={[
-            { id: "scaled", label: `Scaled${scaled.length ? ` · ${scaled.length}` : ""}` },
-            { id: "advertisers", label: `Advertisers${adv.length ? ` · ${adv.length}` : ""}` },
-            { id: "creatives", label: `Creatives${crv.length ? ` · ${crv.length}` : ""}` },
-            { id: "identity", label: `Identity${identity.length ? ` · ${identity.length}` : ""}` },
+            { id: "scaled", label: `Proven${scaled.length ? ` · ${scaled.length}` : ""}` },
+            { id: "advertisers", label: `Brands${adv.length ? ` · ${adv.length}` : ""}` },
+            { id: "creatives", label: `All ads${crv.length ? ` · ${crv.length}` : ""}` },
+            { id: "identity", label: `Personas${identity.length ? ` · ${identity.length}` : ""}` },
           ]}
         />
       </div>
+      {/* Always-visible explainer for the active tab */}
+      <p className="mb-3 px-1 text-[12px] text-[var(--color-ink-muted)]">
+        {tab === "scaled" && (
+          <><b className="text-[var(--color-ink)]">Proven</b> — the same creative an advertiser runs over and over (across many ads, links, or pages). Repetition = it’s working.</>
+        )}
+        {tab === "advertisers" && (
+          <><b className="text-[var(--color-ink)]">Brands</b> — each advertiser, ranked by how many ads they’re running. Tap to pull their full ad library.</>
+        )}
+        {tab === "creatives" && (
+          <><b className="text-[var(--color-ink)]">All ads</b> — every individual ad you’ve pulled, highest winner score first.</>
+        )}
+        {tab === "identity" && (
+          <><b className="text-[var(--color-ink)]">Personas</b> — “Dr. ABC”-style advertisers resolved up to the real brand behind them.</>
+        )}
+      </p>
 
       {/* ── Scaled winners (duplication = proven) ───────────────────────── */}
       {tab === "scaled" &&
@@ -359,9 +374,6 @@ export default function SourceClient({
           />
         ) : (
           <div className="flex flex-col gap-3">
-            <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
-              Creatives an operator is running over and over — the strongest “this works” signal.
-            </p>
             {scaled.map((w) => {
               const hook = adHook(w.ad.ad_body, w.ad.ad_title, w.ad.page_headline);
               const dom = toDomain(w.ad.destination_url);
@@ -491,7 +503,7 @@ export default function SourceClient({
           <div className="flex flex-col gap-3">
             <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
               Showing {crv.length.toLocaleString()} of {creativesTotal.toLocaleString()} ads
-              {vertical !== "all" ? " (filtered)" : ""} — highest winner score first.
+              {vertical !== "all" ? " (filtered)" : ""}.
             </p>
             {crv.map((c) => {
               const on = detail?.id === c.id;
