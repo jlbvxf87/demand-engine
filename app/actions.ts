@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
-import { getWinningCreatives, type AdRow } from "@/lib/data";
+import { getWinningCreatives, searchLibrary as searchLibraryData, type AdRow } from "@/lib/data";
 import Anthropic from "@anthropic-ai/sdk";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
@@ -97,6 +97,16 @@ export async function searchByPage(pageId: string): Promise<ActionResult> {
   const r = await callRoute("/api/spy/search", { search_page_ids: pageId });
   if (r.ok) revalidatePath("/source");
   return r;
+}
+
+/** Source: find an ad ALREADY in your library by brand / copy / domain (not Meta). */
+export async function findSavedAds(query: string): Promise<{ ok: boolean; rows?: AdRow[] }> {
+  try {
+    const rows = await searchLibraryData(query, 100);
+    return { ok: true, rows };
+  } catch {
+    return { ok: false };
+  }
 }
 
 /** Source > Creatives: page through every ad in the library ("Load more"). */

@@ -133,6 +133,31 @@ export async function getCreativesCount(): Promise<number> {
   }
 }
 
+/**
+ * Text-search the ads ALREADY in your library (not Meta) — by brand, ad copy,
+ * destination, or title. Powers the in-app "find a saved ad" box.
+ */
+export async function searchLibrary(query: string, limit = 100): Promise<AdRow[]> {
+  const q = (query || "").trim().replace(/[%,()]/g, " ").trim();
+  if (!q) return [];
+  try {
+    const sb = getServiceClient();
+    const like = `%${q}%`;
+    const { data, error } = await sb
+      .from("spy_ads")
+      .select(AD_COLS)
+      .or(
+        `page_name.ilike.${like},ad_body.ilike.${like},destination_url.ilike.${like},ad_title.ilike.${like}`,
+      )
+      .order("winner_score", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return dedupeByMetaId(data.map(toAdRow));
+  } catch {
+    return [];
+  }
+}
+
 export type ScaledWinner = {
   key: string;
   ad: AdRow; // representative ad (for the detail viewer + scrape)

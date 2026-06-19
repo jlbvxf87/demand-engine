@@ -18,7 +18,7 @@ import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { toSiteUrl, toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
 import { isIndependent } from "@/lib/targeting";
-import { searchAds, fetchCreative, searchByPage, loadCreatives, recreate, sourceFromLink } from "@/app/actions";
+import { searchAds, fetchCreative, searchByPage, loadCreatives, recreate, sourceFromLink, findSavedAds } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
@@ -170,8 +170,28 @@ export default function SourceClient({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [linkInput, setLinkInput] = useState("");
   const [sourcing, setSourcing] = useState(false);
+  const [libQuery, setLibQuery] = useState("");
+  const [libResults, setLibResults] = useState<AdRow[] | null>(null); // null = browsing, [] = no matches
+  const [libSearching, setLibSearching] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+
+  // Find an ad ALREADY in the library (server-side, across all 2K+ — not just loaded).
+  async function findInLibrary() {
+    const q = libQuery.trim();
+    if (!q) {
+      setLibResults(null);
+      return;
+    }
+    setLibSearching(true);
+    const r = await findSavedAds(q);
+    setLibSearching(false);
+    setLibResults(r.ok && r.rows ? r.rows : []);
+  }
+  function clearLibSearch() {
+    setLibQuery("");
+    setLibResults(null);
+  }
 
   // Paste a Meta Ad Library link → source that exact ad → open it (Recreate/Decode).
   async function sourceLink() {
@@ -253,15 +273,15 @@ export default function SourceClient({
     [advertisers, vertical, independentOnly],
   );
   const crv = useMemo(
-    () => allCreatives.filter((a) => vFilter(a.vertical) && indOk(a)),
-    [allCreatives, vertical, independentOnly],
+    () => (libResults !== null ? libResults : allCreatives).filter((a) => vFilter(a.vertical) && indOk(a)),
+    [libResults, allCreatives, vertical, independentOnly],
   );
   const scaledF = useMemo(
     () => scaled.filter((w) => indOk(w.ad)),
     [scaled, independentOnly],
   );
   const byId = useMemo(() => new Map(allCreatives.map((c) => [c.id, c])), [allCreatives]);
-  const moreAvailable = allCreatives.length < creativesTotal && !exhausted;
+  const moreAvailable = libResults === null && allCreatives.length < creativesTotal && !exhausted;
 
   async function loadMoreCreatives() {
     setLoadingMore(true);
@@ -626,21 +646,56 @@ export default function SourceClient({
           </div>
         ))}
 
-      {/* ── Creatives ───────────────────────────────────────────────────── */}
-      {tab === "creatives" &&
-        (crv.length === 0 ? (
-          <EmptyState icon={Search} title="No creatives yet" hint="Run a search to populate winners." />
-        ) : (
-          <div className="flex flex-col gap-3">
-            <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
-              Showing {crv.length.toLocaleString()} of {allCreatives.length.toLocaleString()} loaded
-              {" "}({creativesTotal.toLocaleString()} total in your library).
-              {independentOnly && allCreatives.length - crv.length > 0
-                ? ` ${(allCreatives.length - crv.length).toLocaleString()} market-leader/advocacy ads hidden — turn off “Independent only” to include them.`
-                : ""}
-              {" Tick a box to select, then recreate."}
-            </p>
-            {crv.map((c) => {
+      {/* ── Creatives (your saved library) ──────────────────────────────── */}
+      {tab === "creatives" && (
+        <div className="flex flex-col gap-3">
+          {/* Find an ad ALREADY in your library — searches all of them, not just loaded */}
+          <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-2.5">
+            <Search size={16} className="shrink-0 text-[var(--color-ink-muted)]" />
+            <input
+              value={libQuery}
+              onChange={(e) => setLibQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && findInLibrary()}
+              placeholder="Find a saved ad — brand, copy, or domain"
+              className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[var(--color-ink-muted)]"
+            />
+            {libResults !== null && (
+              <button onClick={clearLibSearch} className="shrink-0 text-[12px] font-semibold text-[var(--color-ink-muted)]">
+                Clear
+              </button>
+            )}
+            <button
+              onClick={findInLibrary}
+              disabled={libSearching || !libQuery.trim()}
+              className="shrink-0 rounded-xl px-3 py-1.5 text-[12.5px] font-bold text-white disabled:opacity-40"
+              style={{ background: ACCENT }}
+            >
+              {libSearching ? <Loader2 size={13} className="animate-spin" /> : "Find"}
+            </button>
+          </div>
+
+          {crv.length === 0 ? (
+            <EmptyState
+              icon={Search}
+              title={libResults !== null ? "No matches in your library" : "No creatives yet"}
+              hint={
+                libResults !== null
+                  ? `Nothing saved matches “${libQuery}”. Clear to browse all, or use the Meta search up top to pull new ads.`
+                  : "Run a search to populate winners."
+              }
+            />
+          ) : (
+            <>
+              <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
+                {libResults !== null
+                  ? `${crv.length.toLocaleString()} match${crv.length === 1 ? "" : "es"} for “${libQuery}” in your library.`
+                  : `Showing ${crv.length.toLocaleString()} of ${allCreatives.length.toLocaleString()} loaded (${creativesTotal.toLocaleString()} total).${
+                      independentOnly && allCreatives.length - crv.length > 0
+                        ? ` ${(allCreatives.length - crv.length).toLocaleString()} hidden by “Independent only”.`
+                        : ""
+                    } Tick a box to select, then recreate.`}
+              </p>
+              {crv.map((c) => {
               const on = detail?.id === c.id;
               const hook = adHook(c.ad_body, c.ad_title, c.page_headline);
               const dom = toDomain(c.destination_url);
@@ -712,11 +767,11 @@ export default function SourceClient({
                   `Load more (${(creativesTotal - allCreatives.length).toLocaleString()} more)`
                 )}
               </button>
-            ) : (
+            ) : libResults === null ? (
               <p className="py-1 text-center text-[11.5px] text-[var(--color-ink-muted)]">
                 That’s all {creativesTotal.toLocaleString()} ads.
               </p>
-            )}
+            ) : null}
             {/* Selection → recreate bar */}
             {selected.size > 0 && (
               <div className="sticky bottom-2 z-10 mt-1 flex items-center justify-between gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 shadow-[0_8px_30px_-8px_rgba(16,21,27,0.30)]">
@@ -745,8 +800,10 @@ export default function SourceClient({
                 </div>
               </div>
             )}
-          </div>
-        ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Identity ────────────────────────────────────────────────────── */}
       {tab === "identity" &&
