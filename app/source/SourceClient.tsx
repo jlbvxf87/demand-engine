@@ -18,7 +18,7 @@ import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { toSiteUrl, toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
 import { isIndependent } from "@/lib/targeting";
-import { searchAds, fetchCreative, searchByPage, loadCreatives } from "@/app/actions";
+import { searchAds, fetchCreative, searchByPage, loadCreatives, recreate } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
@@ -166,8 +166,54 @@ export default function SourceClient({
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
   const [independentOnly, setIndependentOnly] = useState(true);
+  const [recreating, setRecreating] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+
+  // Recreate a winner on-brand: draft copy + stage the creative as the visual
+  // reference, then drop into Create to refine / render.
+  async function runRecreate(ad: AdRow) {
+    setRecreating(true);
+    setNote(null);
+    const r = await recreate(ad.id);
+    setRecreating(false);
+    if (!r.ok) {
+      setNote(r.error || "Recreate failed");
+      return;
+    }
+    const ref = ad.creative_media_type === "image" ? ad.creative_media_url : null;
+    const hook = adHook(ad.ad_body, ad.ad_title, ad.page_headline);
+    const qs = new URLSearchParams();
+    if (ref) qs.set("ref", ref);
+    if (hook) qs.set("prompt", `Recreate this winning angle for our brand: ${hook.slice(0, 180)}`);
+    router.push(`/publish${qs.toString() ? `?${qs}` : ""}`);
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // Bulk: draft on-brand copy for each selected winner, then open Create.
+  async function recreateSelected() {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setRecreating(true);
+    setNote(null);
+    let ok = 0;
+    for (const id of ids) {
+      const r = await recreate(id);
+      if (r.ok) ok++;
+    }
+    setRecreating(false);
+    setSelected(new Set());
+    setNote(`Drafted on-brand versions for ${ok} of ${ids.length} selected ads.`);
+    router.push("/publish");
+  }
 
   const vFilter = (v: string | null) => vertical === "all" || v === vertical;
   // Skip market leaders + advocacy/media unless the user turns the toggle off.
@@ -193,7 +239,7 @@ export default function SourceClient({
 
   async function loadMoreCreatives() {
     setLoadingMore(true);
-    const r = await loadCreatives(allCreatives.length, 60);
+    const r = await loadCreatives(allCreatives.length, 100);
     setLoadingMore(false);
     if (r.ok && r.rows) {
       if (r.rows.length === 0) setExhausted(true);
@@ -542,8 +588,12 @@ export default function SourceClient({
         ) : (
           <div className="flex flex-col gap-3">
             <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
-              Showing {crv.length.toLocaleString()} of {creativesTotal.toLocaleString()} ads
-              {vertical !== "all" ? " (filtered)" : ""}.
+              Showing {crv.length.toLocaleString()} of {allCreatives.length.toLocaleString()} loaded
+              {" "}({creativesTotal.toLocaleString()} total in your library).
+              {independentOnly && allCreatives.length - crv.length > 0
+                ? ` ${(allCreatives.length - crv.length).toLocaleString()} market-leader/advocacy ads hidden — turn off “Independent only” to include them.`
+                : ""}
+              {" Tick a box to select, then recreate."}
             </p>
             {crv.map((c) => {
               const on = detail?.id === c.id;
@@ -554,8 +604,15 @@ export default function SourceClient({
                 <Card
                   key={c.id}
                   className="flex items-center gap-3 p-3"
-                  accent={on ? ACCENT : undefined}
+                  accent={selected.has(c.id) ? ACCENT : on ? ACCENT : undefined}
                 >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(c.id)}
+                    onChange={() => toggleSelect(c.id)}
+                    className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--color-source)]"
+                    title="Select to recreate"
+                  />
                   <AdThumb
                     src={(c.creative_media_type === "image" ? c.creative_media_url : null) || c.page_screenshot_url}
                     name={c.page_name}
@@ -614,6 +671,34 @@ export default function SourceClient({
               <p className="py-1 text-center text-[11.5px] text-[var(--color-ink-muted)]">
                 That’s all {creativesTotal.toLocaleString()} ads.
               </p>
+            )}
+            {/* Selection → recreate bar */}
+            {selected.size > 0 && (
+              <div className="sticky bottom-2 z-10 mt-1 flex items-center justify-between gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 shadow-[0_8px_30px_-8px_rgba(16,21,27,0.30)]">
+                <span className="text-[13px] font-bold">{selected.size} selected</span>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setSelected(new Set())}
+                    className="text-[12.5px] font-semibold text-[var(--color-ink-muted)]"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={recreateSelected}
+                    disabled={recreating}
+                    className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-bold text-white disabled:opacity-60"
+                    style={{ background: ACCENT }}
+                  >
+                    {recreating ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" /> Drafting…
+                      </>
+                    ) : (
+                      `Recreate ${selected.size} on-brand`
+                    )}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         ))}
@@ -840,14 +925,29 @@ export default function SourceClient({
               </p>
             )}
 
-            {/* Primary CTA */}
+            {/* Primary CTA — recreate this winner on-brand */}
             <button
-              onClick={() => toDecode(detail.id)}
-              className="mt-1 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white active:scale-[0.99]"
+              onClick={() => runRecreate(detail)}
+              disabled={recreating}
+              className="mt-1 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white active:scale-[0.99] disabled:opacity-60"
               style={{ background: ACCENT }}
             >
-              Send Winner to Decode
-              <ArrowRight size={18} strokeWidth={2.4} />
+              {recreating ? (
+                <>
+                  <Loader2 size={17} className="animate-spin" /> Drafting your on-brand version…
+                </>
+              ) : (
+                <>
+                  Recreate on-brand <ArrowRight size={18} strokeWidth={2.4} />
+                </>
+              )}
+            </button>
+            {/* Secondary — just analyze the angle */}
+            <button
+              onClick={() => toDecode(detail.id)}
+              className="-mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3 text-[13.5px] font-bold"
+            >
+              Just decode the angle <ArrowRight size={16} />
             </button>
           </div>
         )}

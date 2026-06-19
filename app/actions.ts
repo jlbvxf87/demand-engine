@@ -213,6 +213,75 @@ export async function generateCreatives(
 }
 
 /**
+ * Recreate a winning ad on-brand in one shot: decode its landing (if not yet),
+ * generate original copy + an on-brand still in the same proven angle, and pin
+ * the ad's scraped creative as the visual reference so the video comes out
+ * SIMILAR to the original. Persists to ad_creatives → shows in Create.
+ * `auto: true` also kicks the video render; otherwise the user renders in Create.
+ */
+export async function recreate(
+  adId: string,
+  opts: { brandSlug?: string | null; auto?: boolean; provider?: string } = {}
+): Promise<ActionResult> {
+  try {
+    const sb = getServiceClient();
+    const { data } = await sb
+      .from("spy_ads")
+      .select("crawl_status, creative_media_url, creative_media_type")
+      .eq("id", adId)
+      .single();
+    const ad = data as
+      | { crawl_status?: string; creative_media_url?: string | null; creative_media_type?: string | null }
+      | null;
+
+    // 1. Decode the landing page first (best-effort) so the copy is sharper.
+    if (ad && ad.crawl_status !== "done") {
+      await callRoute("/api/spy/crawl", { ad_id: adId });
+    }
+
+    // 2. Generate on-brand copy + a still in the same angle (the proven engine).
+    const gen = await generateCreatives(adId, opts.brandSlug ?? null, 3);
+    if (!gen.ok) return gen;
+
+    // 3. Pin the winning creative as the visual reference on the newest variant,
+    //    so a video render comes out similar to the original ad.
+    const refUrl = ad?.creative_media_type === "image" ? ad?.creative_media_url ?? null : null;
+    let heroId: string | null = null;
+    try {
+      const { data: hero } = await sb
+        .from("ad_creatives")
+        .select("id")
+        .eq("inspired_by", adId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      heroId = (hero as { id: string } | null)?.id ?? null;
+      if (heroId && refUrl) {
+        await sb.from("ad_creatives").update({ image_url: refUrl }).eq("id", heroId);
+      }
+    } catch {}
+
+    // 4. Optionally render the video now (else the user renders it in Create).
+    if (opts.auto && heroId) {
+      await renderVideo(heroId, opts.provider ?? "seedance");
+    }
+
+    revalidatePath("/publish");
+    revalidatePath("/rebuild");
+    return {
+      ok: true,
+      data: {
+        created: (gen.data as { created?: number })?.created ?? 3,
+        reference: refUrl,
+        rendered: Boolean(opts.auto),
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Recreate failed" };
+  }
+}
+
+/**
  * Decode ANY url (standalone — no Source pick needed). Best-effort fetch of the
  * page text, then Claude extracts why it works + a rebuild brief. Returns inline.
  */

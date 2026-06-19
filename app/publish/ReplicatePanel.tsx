@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { X, Sparkles, Loader2, ImagePlus } from "lucide-react";
 import { Card } from "@/components/ui";
 import { VIDEO_PROVIDERS, type VideoProvider } from "@/lib/video";
@@ -11,9 +11,14 @@ const ACCENT = "var(--color-publish)";
 
 export default function ReplicatePanel() {
   const router = useRouter();
+  const params = useSearchParams();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [images, setImages] = useState<string[]>([]);
-  const [prompt, setPrompt] = useState("");
+  // Arriving from "Recreate"? Pre-load the winning ad's creative as the reference.
+  const [images, setImages] = useState<string[]>(() => {
+    const ref = params.get("ref");
+    return ref ? [ref] : [];
+  });
+  const [prompt, setPrompt] = useState(() => params.get("prompt") || "");
   const [model, setModel] = useState<VideoProvider>("seedance");
   const [count, setCount] = useState(3);
   const [uploading, setUploading] = useState(false);
