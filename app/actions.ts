@@ -587,19 +587,24 @@ async function triggerReadyStoryboards(sb: SB): Promise<void> {
  * all finish, the poll loop hands them to the stitch worker for one final video.
  */
 export async function createStoryboard(input: {
-  imageUrls: string[];
+  imageUrls?: string[];
   prompt: string;
   provider?: string;
   durationPerClip?: number;
+  sceneCount?: number; // used when no reference frames are uploaded (text-to-video scenes)
 }): Promise<ActionResult> {
   const provider = input.provider ?? "seedance";
   if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
   const imgs = (input.imageUrls || []).filter(Boolean);
-  if (imgs.length < 2) return { ok: false, error: "Add at least 2 images (one per scene)" };
+  // Reference frames drive the scene count; otherwise use the chosen scene count
+  // and render each scene from text (no upload required).
+  const clipCount = imgs.length >= 2 ? imgs.length : Math.max(0, Math.floor(input.sceneCount ?? 0));
+  if (clipCount < 2) {
+    return { ok: false, error: "Add 2+ reference frames, or pick a scene count of 2 or more." };
+  }
   const prompt = (input.prompt || "").trim();
   if (!prompt) return { ok: false, error: "A story brief is required" };
   const durationPerClip = input.durationPerClip ?? 5;
-  const clipCount = imgs.length;
 
   try {
     const sb = getServiceClient();
@@ -624,6 +629,7 @@ export async function createStoryboard(input: {
     let created = 0;
     for (let i = 0; i < clipCount; i++) {
       const scene = scenes[i];
+      const img = imgs[i] ?? null; // null for text-to-video scenes
       const { data: row } = await sb
         .from("ad_creatives")
         .insert({
@@ -631,7 +637,7 @@ export async function createStoryboard(input: {
           scene_index: i,
           hook_text: scene.scene_summary,
           image_prompt: scene.scene_prompt,
-          image_url: imgs[i],
+          image_url: img,
           hook_type: "scene",
           platform: "meta",
           creative_type: "scene",
@@ -646,8 +652,8 @@ export async function createStoryboard(input: {
         const { taskId } = await submitKieVideo({
           provider,
           prompt: scene.scene_prompt,
-          mode: "image-to-video",
-          referenceImageUrls: [imgs[i]],
+          mode: img ? "image-to-video" : "text-to-video",
+          referenceImageUrls: img ? [img] : null,
           duration: scene.duration || durationPerClip,
         });
         await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);

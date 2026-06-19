@@ -16,11 +16,15 @@ export default function StoryboardPanel() {
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<VideoProvider>("seedance");
   const [duration, setDuration] = useState(5);
+  const [sceneCount, setSceneCount] = useState(4);
   const [uploading, setUploading] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
   const durations = PROVIDER_DURATIONS[model];
+  // Reference frames (if added) drive the scene count; otherwise use the picker.
+  const usingImages = images.length >= 2;
+  const scenes = usingImages ? images.length : sceneCount;
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
@@ -44,12 +48,15 @@ export default function StoryboardPanel() {
   }
 
   function generate() {
-    if (images.length < 2) return setNote("Add at least 2 images — one per scene");
+    if (images.length === 1) {
+      return setNote("Add a 2nd frame (one per scene), or remove it to generate scenes from your brief.");
+    }
     if (!prompt.trim()) return setNote("Add a story brief");
     setNote(null);
     startTransition(async () => {
       const r = await createStoryboard({
-        imageUrls: images,
+        imageUrls: usingImages ? images : [],
+        sceneCount: usingImages ? undefined : sceneCount,
         prompt,
         provider: model,
         durationPerClip: duration,
@@ -68,8 +75,9 @@ export default function StoryboardPanel() {
     <Card className="mb-5 p-4" accent={ACCENT}>
       <p className="text-[15px] font-bold">Multi-scene story</p>
       <p className="mb-3 text-[12.5px] text-[var(--color-ink-muted)]">
-        Add 2/4/6/8 reference frames (one per scene) + a story brief. Sonnet writes a master script,
-        each scene renders as a clip, and they&apos;re stitched into one video.
+        Pick how many scenes + write a story brief → Sonnet writes a master script, each scene renders
+        as a clip, and they&apos;re stitched into one video. Optionally drop a reference frame per scene
+        to lock the look.
       </p>
 
       <div className="mb-3 flex flex-wrap gap-2">
@@ -94,9 +102,16 @@ export default function StoryboardPanel() {
         <button
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
-          className="grid h-20 w-20 place-items-center rounded-xl border border-dashed border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-50"
+          className="grid h-20 w-20 place-items-center gap-1 rounded-xl border border-dashed border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-50"
         >
-          {uploading ? <Loader2 size={18} className="animate-spin" /> : <ImagePlus size={18} />}
+          {uploading ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : (
+            <>
+              <ImagePlus size={18} />
+              <span className="text-[9px] font-semibold leading-tight">Add frames<br />(optional)</span>
+            </>
+          )}
         </button>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
       </div>
@@ -132,9 +147,21 @@ export default function StoryboardPanel() {
             </option>
           ))}
         </select>
+        <select
+          value={usingImages ? images.length : sceneCount}
+          onChange={(e) => setSceneCount(Number(e.target.value))}
+          disabled={usingImages}
+          title={usingImages ? "Scene count = your uploaded frames" : "How many scenes to generate"}
+          className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2 text-[13px] font-bold outline-none disabled:opacity-60"
+        >
+          {[2, 3, 4, 5, 6, 8].map((n) => (
+            <option key={n} value={n}>
+              {n} scenes
+            </option>
+          ))}
+        </select>
         <span className="text-[12px] text-[var(--color-ink-muted)]">
-          {images.length || 0} scene{images.length === 1 ? "" : "s"}
-          {images.length >= 2 ? ` · ~${images.length * duration}s total` : ""}
+          ~{scenes * duration}s total{usingImages ? " · from frames" : " · from brief"}
         </span>
         <button
           onClick={generate}
