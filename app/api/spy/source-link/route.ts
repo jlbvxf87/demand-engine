@@ -74,6 +74,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Scrape failed" }, { status: 500 });
   }
 
+  // The render page's innerText is "<Advertiser> Sponsored Library ID: <id> Menu
+  // <the actual ad copy>". Pull a clean advertiser + body out of it.
+  let advertiser = (scraped.advertiser || "").trim();
+  let body = (scraped.page_text || "").trim();
+  if (body) {
+    const sp = body.search(/\bSponsored\b/i);
+    if (!advertiser && sp > 0 && sp < 80) advertiser = body.slice(0, sp).trim();
+    const lib = body.match(/Library ID:\s*\d+\s*(?:Menu)?/i);
+    if (lib) body = body.slice(body.indexOf(lib[0]) + lib[0].length).trim();
+    else if (sp >= 0) body = body.slice(sp + "Sponsored".length).trim();
+    body = body.slice(0, 3000);
+  }
+
   // Record a search row so the ad has provenance, then insert the ad.
   const { data: searchRow } = await sb
     .from("spy_searches")
@@ -83,8 +96,8 @@ export async function POST(req: Request) {
 
   const row: Record<string, unknown> = {
     meta_ad_id: id,
-    page_name: scraped.advertiser || "Unknown advertiser",
-    ad_body: scraped.page_text || null,
+    page_name: advertiser || "Unknown advertiser",
+    ad_body: body || scraped.page_text || null,
     ad_snapshot_url: `https://www.facebook.com/ads/archive/render_ad/?id=${id}`,
     destination_url: scraped.link || null,
     creative_media_url: scraped.media_url || null,
