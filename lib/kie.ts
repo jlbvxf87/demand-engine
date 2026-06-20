@@ -14,6 +14,7 @@ export type { VideoProvider, VideoMode } from "@/lib/video";
 const KIE_BASE = (process.env.KIE_API_BASE_URL || "https://api.kie.ai").replace(/\/$/, "");
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type SubmitOpts = {
   provider: VideoProvider;
@@ -109,47 +110,83 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
   }
 }
 
-/** Submit a video job to kie.ai. Returns the taskId to poll. Throws on failure. */
+/**
+ * Submit a video job to kie.ai. Returns the taskId to poll. Throws on failure.
+ *
+ * Retries TRANSIENT failures (network/timeout, HTTP 429, HTTP 5xx) up to 3 total
+ * attempts with backoff. Rationale: a thrown submit marks the ad_creatives row
+ * 'failed' with no job to poll — so a momentary Kie blip (common on a burst of
+ * variants) would permanently kill an otherwise-valid render until the user
+ * manually re-renders. Non-transient errors (4xx validation / content
+ * moderation) are surfaced immediately — they won't change on retry, and we want
+ * the real reason shown fast rather than buried behind three slow retries.
+ */
 export async function submitKieVideo(o: SubmitOpts): Promise<{ taskId: string }> {
   const key = process.env.KIE_API_KEY;
   if (!key) throw new Error("KIE_API_KEY not set — add it to env to enable video render.");
 
   const { url, body } = buildRequest(o);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  const json = (await res.json().catch(() => ({}))) as {
-    code?: number;
-    msg?: string;
-    message?: string;
-    taskId?: string;
-    data?: { taskId?: string; task_id?: string; id?: string };
-  };
+  const MAX_ATTEMPTS = 3;
+  let lastErr = "Kie submit failed";
 
-  // The unified jobs endpoint returns {code:200, data:{taskId}}, but the VEO and
-  // RUNWAY families (/veo/generate, /runway/generate) are a different API and may
-  // nest the id under a different key or omit the 200 envelope. Accept the first
-  // non-empty task id from any known shape rather than relying on code === 200.
-  const taskId =
-    json?.data?.taskId ||
-    json?.data?.task_id ||
-    json?.taskId ||
-    json?.data?.id ||
-    undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+        // Bound each attempt so a hung submit can't stall the render action.
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch (e) {
+      // Network/timeout: the request didn't reach a verdict, so no job was
+      // created — safe to retry.
+      lastErr = e instanceof Error ? e.message : "network error";
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(700 * attempt);
+        continue;
+      }
+      throw new Error(`Kie submit failed after ${MAX_ATTEMPTS} tries — ${lastErr}`);
+    }
 
-  // Only treat as a failure when there's no task id to poll. If we got an id,
-  // the job is (or will be) billing regardless of the envelope shape, so we must
-  // return it so the row can be polled instead of being wrongly marked failed.
-  if (!taskId) {
-    const msg = json?.msg || json?.message;
-    if (!res.ok) throw new Error(msg || `Kie HTTP ${res.status}`);
-    throw new Error(msg || "Kie returned no taskId");
+    const json = (await res.json().catch(() => ({}))) as {
+      code?: number;
+      msg?: string;
+      message?: string;
+      taskId?: string;
+      data?: { taskId?: string; task_id?: string; id?: string };
+    };
+
+    // The unified jobs endpoint returns {code:200, data:{taskId}}, but the VEO and
+    // RUNWAY families (/veo/generate, /runway/generate) are a different API and may
+    // nest the id under a different key or omit the 200 envelope. Accept the first
+    // non-empty task id from any known shape rather than relying on code === 200.
+    const taskId =
+      json?.data?.taskId ||
+      json?.data?.task_id ||
+      json?.taskId ||
+      json?.data?.id ||
+      undefined;
+
+    // Got an id → the job is (or will be) billing regardless of envelope shape;
+    // return it so the row can be polled instead of being wrongly marked failed.
+    if (taskId) return { taskId };
+
+    const msg = json?.msg || json?.message || `Kie HTTP ${res.status}`;
+    // Retry only transient server-side rejections (rate-limit / 5xx). A 4xx is a
+    // real validation/policy rejection that won't change on retry — surface now.
+    const transient = res.status === 429 || res.status >= 500;
+    lastErr = msg;
+    if (transient && attempt < MAX_ATTEMPTS) {
+      await sleep(700 * attempt);
+      continue;
+    }
+    throw new Error(msg);
   }
 
-  return { taskId };
+  throw new Error(lastErr);
 }
 
 export type PollResult = {
