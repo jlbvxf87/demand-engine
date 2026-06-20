@@ -46,16 +46,22 @@ export async function submitTTS(text: string, voice: string = DEFAULT_VOICE): Pr
   return createTask(TTS_MODEL, { dialogue: [{ voice, text: t }] });
 }
 
+// kling/ai-avatar-standard REJECTS an empty prompt ("prompt is required", verified
+// live), so a non-empty default is mandatory — it also guides expression/motion.
+const DEFAULT_LIPSYNC_PROMPT =
+  "A person speaking naturally and directly to the camera, subtle authentic expression, talking-head UGC style.";
+
 /** Submit a lip-sync job: image + audio → talking video. Returns the taskId. */
 export async function submitLipsync(
   imageUrl: string,
   audioUrl: string,
   prompt = "",
 ): Promise<{ taskId: string }> {
+  const p = (prompt || "").trim().slice(0, 4800) || DEFAULT_LIPSYNC_PROMPT;
   return createTask(LIPSYNC_MODEL, {
     image_url: imageUrl,
     audio_url: audioUrl,
-    prompt: (prompt || "").slice(0, 4800),
+    prompt: p,
   });
 }
 
@@ -122,10 +128,20 @@ export async function advanceSpokesperson(sb: SB): Promise<number> {
             advanced++;
             continue;
           }
-          const { taskId } = await submitLipsync(r.image_url, j.url);
+          // Submit the lip-sync. A submit failure here is usually permanent (bad
+          // input / model rejection), so mark the row failed rather than looping
+          // forever at the tts stage — the user can re-render.
+          let lipsyncId: string;
+          try {
+            ({ taskId: lipsyncId } = await submitLipsync(r.image_url, j.url));
+          } catch {
+            await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", r.id);
+            advanced++;
+            continue;
+          }
           const { data: cas } = await sb
             .from("ad_creatives")
-            .update({ render_stage: "lipsync", t2v_job_id: taskId, vo_audio_url: j.url })
+            .update({ render_stage: "lipsync", t2v_job_id: lipsyncId, vo_audio_url: j.url })
             .eq("id", r.id)
             .eq("render_stage", "tts")
             .select("id");
