@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { X, Sparkles, Loader2, ImagePlus } from "lucide-react";
 import { Card } from "@/components/ui";
@@ -24,6 +24,18 @@ export default function ReplicatePanel() {
   const [uploading, setUploading] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+
+  // Re-sync when a NEW recreate navigation lands while the panel is already mounted
+  // (e.g. router.push("/publish?ref=...&prompt=...")). The lazy initializers above
+  // only run on first mount, so without this the new ref/prompt would be ignored.
+  // Keyed on the actual param values so unrelated re-renders don't clobber an
+  // in-progress upload or what the user is typing.
+  const ref = params.get("ref");
+  const promptParam = params.get("prompt");
+  useEffect(() => {
+    if (ref) setImages([ref]);
+    if (promptParam) setPrompt(promptParam);
+  }, [ref, promptParam]);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);

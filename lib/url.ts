@@ -25,10 +25,3 @@ export function toDomain(s: string | null | undefined): string {
     .replace(/^www\./i, "")
     .replace(/\/.*$/, "");
 }
-
-/** A live screenshot of the ad's landing page — the universal visual fallback
-    when there's no scraped creative (always renders, clearly the product page). */
-export function landingShot(s: string | null | undefined): string | null {
-  const u = toSiteUrl(s);
-  return u ? `https://image.thum.io/get/width/600/crop/380/noanimate/${encodeURIComponent(u)}` : null;
-}

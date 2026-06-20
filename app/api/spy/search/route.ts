@@ -392,6 +392,32 @@ export async function POST(req: Request) {
   const newRows = rows.filter((r) => r.meta_ad_id && !existing.has(r.meta_ad_id));
   const alreadyHad = uniqueAds.length - newRows.length;
 
+  // Nothing new to record — every ad in this result set is already stored.
+  // Skip the spy_searches provenance insert (it would just clutter the table
+  // with empty no-op rows) and the per-row insert loop (which would be empty
+  // anyway). Return the normal success response with the same shape; there's
+  // no search_id when nothing was written, so we omit it (client only reads
+  // meta.total_fetched / meta.added / meta.already_had).
+  if (newRows.length === 0) {
+    return NextResponse.json({
+      search_id: null,
+      ads: [],
+      resolution, // null when not using advertiser_alias, or no match found
+      meta: {
+        total_fetched: uniqueAds.length,
+        added: 0,
+        already_had: alreadyHad,
+        pages_loaded: pagesLoaded,
+        elapsed_ms: Date.now() - started,
+      },
+      diagnostic: buildDiagnostic({
+        keyword, search_page_ids, ad_active_status, media_type,
+        pagesLoaded, elapsedMs: Date.now() - started,
+        totalFetched: uniqueAds.length, metaError: null, networkError: null,
+      }),
+    });
+  }
+
   const searchLabel = keyword?.trim() || `page:${search_page_ids?.trim()}`;
   const { data: searchRow, error: searchErr } = await supabase
     .from('spy_searches')

@@ -220,12 +220,19 @@ export async function generateCreatives(
       inspired_by: adId,
     }));
 
-    const { error } = await sb.from("ad_creatives").insert(rows);
+    const { data: inserted, error } = await sb
+      .from("ad_creatives")
+      .insert(rows)
+      .select("id");
     if (error) return { ok: false, error: error.message };
+
+    // Inserted ids in row order — ids[0] is the hero (the i===0 row that
+    // carries image_url), so callers can pin the reference image deterministically.
+    const ids = ((inserted as { id: string }[] | null) ?? []).map((r) => r.id);
 
     revalidatePath("/rebuild");
     revalidatePath("/publish");
-    return { ok: true, data: { created: rows.length, image: Boolean(imageUrl) } };
+    return { ok: true, data: { created: rows.length, ids, image: Boolean(imageUrl) } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Persist failed" };
   }
@@ -262,27 +269,24 @@ export async function recreate(
     const gen = await generateCreatives(adId, opts.brandSlug ?? null, 3);
     if (!gen.ok) return gen;
 
-    // 3. Pin the winning creative as the visual reference on the newest variant,
-    //    so a video render comes out similar to the original ad.
+    // 3. Pin the winning creative as the visual reference on the HERO variant,
+    //    so a video render comes out similar to the original ad. generateCreatives
+    //    returns the inserted ids in order, and ids[0] is the hero (the i===0 row
+    //    that carries the still). Pinning by that id is deterministic — no more
+    //    arbitrary created_at re-query that could hit the wrong variant.
     const refUrl = ad?.creative_media_type === "image" ? ad?.creative_media_url ?? null : null;
-    let heroId: string | null = null;
-    try {
-      const { data: hero } = await sb
-        .from("ad_creatives")
-        .select("id")
-        .eq("inspired_by", adId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      heroId = (hero as { id: string } | null)?.id ?? null;
-      if (heroId && refUrl) {
+    const heroId = (gen.data as { ids?: string[] })?.ids?.[0] ?? null;
+    if (heroId && refUrl) {
+      try {
         await sb.from("ad_creatives").update({ image_url: refUrl }).eq("id", heroId);
-      }
-    } catch {}
+      } catch {}
+    }
 
     // 4. Optionally render the video now (else the user renders it in Create).
+    let rendered = false;
     if (opts.auto && heroId) {
       await renderVideo(heroId, opts.provider ?? "seedance");
+      rendered = true;
     }
 
     revalidatePath("/publish");
@@ -292,7 +296,7 @@ export async function recreate(
       data: {
         created: (gen.data as { created?: number })?.created ?? 3,
         reference: refUrl,
-        rendered: Boolean(opts.auto),
+        rendered,
       },
     };
   } catch (e) {

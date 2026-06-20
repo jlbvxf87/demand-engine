@@ -13,13 +13,49 @@ function extractAdId(link: string): string | null {
   const s = (link || "").trim();
   try {
     const u = new URL(s);
+    // 1. The `id` query param of a real URL is the only trustworthy source of
+    //    the ad id. Prefer it.
     const id = u.searchParams.get("id");
     if (id && /^\d{5,}$/.test(id)) return id;
+    // Only fall back to a path number when the URL actually points at the ad
+    // library / render endpoint — otherwise a long number in a path (a profile
+    // id, business id, etc.) would silently source the WRONG ad.
+    const looksLikeAdUrl = /ads\/library|render_ad/i.test(u.pathname + u.search);
+    if (looksLikeAdUrl) {
+      const pm = s.match(/\/(\d{8,})(?:\/|\?|$)/);
+      if (pm) return pm[1];
+    }
   } catch {
-    /* not a full URL — fall through to regex */
+    /* not a full URL — fall through to bare-id handling below */
   }
-  const m = s.match(/[?&]id=(\d{5,})/) || s.match(/\/(\d{8,})(?:\/|\?|$)/) || s.match(/^(\d{8,})$/);
-  return m ? m[1] : null;
+  // 2. A bare numeric id the user typed (not embedded in a URL path). We do NOT
+  //    accept a loose 8+ digit number from inside an arbitrary path/string,
+  //    because that matches Facebook profile/business ids and mis-sources ads.
+  const bare = s.match(/^(\d{5,})$/) || s.match(/[?&]id=(\d{5,})/);
+  return bare ? bare[1] : null;
+}
+
+/**
+ * Try to find a delivery start date in the scraped render text and convert it to
+ * a whole-day "days running" count. Meta's render page sometimes contains a
+ * "Started running on Jan 5, 2025" style line; if we can parse it we report an
+ * honest days_running, otherwise we return null and let the UI omit the figure
+ * rather than lie with "0d".
+ */
+function daysRunningFromText(text: string | null | undefined): number | null {
+  const t = (text || "").trim();
+  if (!t) return null;
+  // "Started running on <date>" or just "<Month DD, YYYY>" near a "running" cue.
+  const m =
+    t.match(/Started running on\s+([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})/i) ||
+    t.match(/running on\s+([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})/i);
+  if (!m) return null;
+  const ms = Date.parse(m[1]);
+  if (Number.isNaN(ms)) return null;
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  // Guard against garbage (future dates / unparseable years that slipped through).
+  if (days < 0 || days > 36_500) return null;
+  return days;
 }
 
 /**
@@ -94,6 +130,13 @@ export async function POST(req: Request) {
     .select("id")
     .single();
 
+  // We don't get a reliable ad_delivery_start_time from a render-page scrape, so
+  // we can't compute the spend/impression-based winner_score the search route
+  // does. Only report days_running when we can actually parse it from the page
+  // text; otherwise leave it null so the UI shows nothing instead of "0d".
+  // (toAdRow coerces null → 0 for the AdRow type, so cards still render cleanly.)
+  const parsedDays = daysRunningFromText(scraped.page_text);
+
   const row: Record<string, unknown> = {
     meta_ad_id: id,
     page_name: advertiser || "Unknown advertiser",
@@ -103,10 +146,16 @@ export async function POST(req: Request) {
     creative_media_url: scraped.media_url || null,
     creative_media_type: scraped.media_type || (scraped.media_url ? "image" : null),
     crawl_status: "pending",
-    days_running: 0,
+    // null (not 0) when unknown — honest "no data" rather than a fake "0d running".
+    days_running: parsedDays,
+    // No spend/impression data from a render scrape → can't score it. Leave 0.
     winner_score: 0,
     brand_ad_count: 1,
     currency: "USD",
+    // NOTE: `vertical` is overloaded to store the win-stage badge (see search
+    // route's winnerBadge). This is a link-sourced placeholder — we have no
+    // metrics to grade the ad, so "testing" is a neutral default, NOT a real
+    // computed badge.
     vertical: "testing",
     search_id: (searchRow as { id: string } | null)?.id ?? null,
   };

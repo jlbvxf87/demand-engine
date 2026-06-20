@@ -46,6 +46,13 @@ async function run(req: Request) {
 
   const url = new URL(req.url);
   const limit = Math.min(MAX_BATCH, Math.max(1, Number(url.searchParams.get("limit")) || DEFAULT_BATCH));
+  // Escape hatch: `?retryNone=1` re-includes ads previously marked
+  // creative_media_type="none" (a failed/empty scrape). The "none" marker is
+  // otherwise permanent and excluded from the frequent backfill, so a transient
+  // failure — or a video ad that becomes scrapeable after scraper improvements —
+  // would be dropped forever. A manual/periodic call with this flag re-attempts
+  // them. Default (no flag) behavior is unchanged.
+  const retryNone = Boolean(url.searchParams.get("retryNone"));
 
   const sb = getServiceClient();
 
@@ -61,22 +68,39 @@ async function run(req: Request) {
       .map((w) => w.ad.id);
   } catch {}
 
-  // Priority 2: fill the rest by ad VOLUME (then longevity) — never-attempted only.
-  const { data, error } = await sb
+  // Priority 2: fill the rest by ad VOLUME (then longevity). By default only
+  // never-attempted rows (creative_media_type IS NULL). With `?retryNone=1` we
+  // also pick up rows that still lack media but were marked "none", giving them
+  // a fresh attempt.
+  let p2 = sb
     .from("spy_ads")
     .select("id")
-    .is("creative_media_url", null)
-    .is("creative_media_type", null)
+    .is("creative_media_url", null);
+  if (!retryNone) p2 = p2.is("creative_media_type", null);
+  p2 = p2
     .not("ad_snapshot_url", "is", null)
     .order("brand_ad_count", { ascending: false })
     .order("days_running", { ascending: false })
     .limit(limit);
+  const { data, error } = await p2;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const volumeIds = (data ?? []).map((r) => (r as { id: string }).id);
   const ids = [...new Set([...priorityIds, ...volumeIds])].slice(0, limit);
   if (ids.length === 0) {
     return NextResponse.json({ processed: 0, succeeded: 0, remaining: 0, done: true });
+  }
+
+  // When retrying "none" rows, clear the stale marker first so each row gets a
+  // clean re-attempt (scrapeAndStoreCreative only short-circuits on a non-null
+  // creative_media_url, so this is purely cosmetic-hygiene before the rescrape).
+  if (retryNone) {
+    await sb
+      .from("spy_ads")
+      .update({ creative_media_type: null })
+      .in("id", ids)
+      .is("creative_media_url", null)
+      .eq("creative_media_type", "none");
   }
 
   const results = await mapLimit(ids, CONCURRENCY, (id) => scrapeAndStoreCreative(id));

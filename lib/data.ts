@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
 import { toDomain } from "@/lib/url";
 import { adHook, isBoilerplate } from "@/lib/ad";
@@ -138,7 +139,11 @@ export async function getCreativesCount(): Promise<number> {
  * destination, or title. Powers the in-app "find a saved ad" box.
  */
 export async function searchLibrary(query: string, limit = 100): Promise<AdRow[]> {
-  const q = (query || "").trim().replace(/[%,()]/g, " ").trim();
+  // Strip LIKE wildcards (% _) and PostgREST structural chars (, ( ) * \) so the
+  // value is treated as a plain literal substring. Leaving any of these in lets
+  // `_`/`*` act as wildcards, and `, ( ) \` can break the `.or()` parse (which
+  // the catch would swallow → [] → a false "no matches" for a valid saved ad).
+  const q = (query || "").replace(/[%_,()*\\]/g, " ").replace(/\s+/g, " ").trim();
   if (!q) return [];
   try {
     const sb = getServiceClient();
@@ -203,10 +208,15 @@ type ScaledGroupRow = {
   creative_media_url: string | null;
 };
 
-export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
-  try {
-    const sb = getServiceClient();
-    const { data, error } = await sb
+// The full scan + grouping + hydrate is heavy and runs on every Home load,
+// every Source load, and every backfill cron tick (all uncached/force-dynamic).
+// Cache it briefly so those repeated calls reuse one result. The supabase client
+// is created INSIDE so the service client runs per-call (never captured/stale).
+const cachedScaledWinners = unstable_cache(
+  async (limit: number): Promise<ScaledWinner[]> => {
+    try {
+      const sb = getServiceClient();
+      const { data, error } = await sb
       .from("spy_ads")
       .select(SCALED_GROUP_COLS)
       .order("created_at", { ascending: false })
@@ -290,9 +300,16 @@ export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
         return { key: r.key, ad, adCount: r.adCount, landingPages: r.landingPages, advertisers: r.advertisers, maxDays: r.maxDays };
       })
       .filter((x): x is ScaledWinner => x !== null);
-  } catch {
-    return [];
-  }
+    } catch {
+      return [];
+    }
+  },
+  ["scaled-winners"],
+  { revalidate: 300 },
+);
+
+export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
+  return cachedScaledWinners(limit);
 }
 
 export type Advertiser = {

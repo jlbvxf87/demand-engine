@@ -245,16 +245,43 @@ export default function SourceClient({
   }
 
   // Bulk: draft on-brand copy for each selected winner, then open Create.
+  // recreate() is expensive (landing crawl + Claude generation + DB writes per
+  // ad), so run with bounded concurrency and cap runaway bulk selections.
   async function recreateSelected() {
-    const ids = [...selected];
+    let ids = [...selected];
     if (!ids.length) return;
+
+    // Guard against runaway bulk — recreate is AI + crawl per ad.
+    const MAX_BULK = 12;
+    const capped = ids.length > MAX_BULK;
+    if (capped) ids = ids.slice(0, MAX_BULK);
+
     setRecreating(true);
-    setNote(null);
+    setNote(
+      capped
+        ? "Recreating the first 12; select fewer for the rest."
+        : null,
+    );
+
+    // Bounded concurrency: process ids in chunks of 3 via Promise.all.
+    const CONCURRENCY = 3;
     let ok = 0;
-    for (const id of ids) {
-      const r = await recreate(id);
-      if (r.ok) ok++;
+    let failed = 0;
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const chunk = ids.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        chunk.map(async (id) => {
+          try {
+            const r = await recreate(id);
+            return r.ok;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      for (const success of results) success ? ok++ : failed++;
     }
+
     setRecreating(false);
     setSelected(new Set());
     setNote(`Drafted on-brand versions for ${ok} of ${ids.length} selected ads.`);
