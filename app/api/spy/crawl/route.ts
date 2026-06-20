@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { isAdminAuthed } from '@/lib/admin-auth';
 import { isMachineAuthed } from '@/lib/machine-auth';
 import { getServiceClient } from '@/lib/supabase/server';
+import { toSiteUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -115,8 +116,16 @@ export async function POST(req: Request) {
     .eq('id', ad_id)
     .single();
 
-  const url = providedUrl || adRow?.destination_url;
-  if (!url) return NextResponse.json({ error: 'No URL available to crawl' }, { status: 400 });
+  // Destinations are often stored without a scheme (e.g. "www.endthewaitpa.com",
+  // "glp.diet") — normalize to a fetchable https URL, and reject non-URL captions.
+  const url = toSiteUrl(providedUrl || adRow?.destination_url);
+  if (!url) {
+    await supabase.from('spy_ads').update({ crawl_status: 'error' }).eq('id', ad_id);
+    return NextResponse.json(
+      { error: "No crawlable landing-page URL for this ad — its destination isn't a real link." },
+      { status: 400 },
+    );
+  }
 
   await supabase.from('spy_ads').update({ crawl_status: 'crawling' }).eq('id', ad_id);
 

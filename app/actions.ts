@@ -495,6 +495,38 @@ export async function renderVideo(
 }
 
 /**
+ * Kie hosts finished videos on TEMPORARY CDN URLs (tempfile.aiquickdraw.com)
+ * that expire. Download the mp4 and re-upload it to permanent Supabase Storage
+ * (the public `ad-creatives` bucket, under the `generated/` prefix) so the
+ * stored video_url never 404s. Returns the permanent public URL, or null on any
+ * failure so the caller can fall back to the temp URL (never lose the video).
+ */
+async function persistVideo(sourceUrl: string, id: string): Promise<string | null> {
+  try {
+    const res = await fetch(sourceUrl, {
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.byteLength < 1024) return null; // truncated / error page, not a real video
+    const sb = getServiceClient();
+    const path = `generated/${id}.mp4`;
+    const { error } = await sb.storage
+      .from("ad-creatives")
+      .upload(path, buffer, { contentType: "video/mp4", upsert: true });
+    if (error) return null;
+    const { data } = sb.storage.from("ad-creatives").getPublicUrl(path);
+    return data.publicUrl;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Poll every in-progress kie job and persist results. Called on an interval by
  * the Studio while any creative is rendering. Returns how many flipped state.
  */
@@ -520,9 +552,13 @@ export async function pollVideoJobs(): Promise<ActionResult> {
       try {
         const r = await pollKieVideo(row.video_provider, row.t2v_job_id);
         if (r.state === "completed" && r.videoUrl) {
+          // Kie's videoUrl is a temporary CDN link that expires — download and
+          // re-upload to permanent Supabase Storage. Fall back to the temp URL
+          // if persistence fails, so the video is never lost.
+          const permanent = await persistVideo(r.videoUrl, row.id);
           await sb
             .from("ad_creatives")
-            .update({ video_url: r.videoUrl, video_status: "ready" })
+            .update({ video_url: permanent ?? r.videoUrl, video_status: "ready" })
             .eq("id", row.id);
           updated++;
         } else if (r.state === "failed") {
