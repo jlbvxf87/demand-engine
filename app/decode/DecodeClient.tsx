@@ -183,7 +183,12 @@ export default function DecodeClient({
     { icon: Target, label: "CTA / offer", value: p?.cta_text || ad.page_cta || ad.page_offer },
   ];
 
-  const decoded = patterns.length > 0 || ad.crawl_status === "crawled";
+  // The crawl route writes crawl_status 'done' (not 'crawled') and fills page_*;
+  // treat any of those as decoded so a successful crawl reflects in the UI.
+  const decoded =
+    patterns.length > 0 ||
+    ad.crawl_status === "done" ||
+    Boolean(ad.page_ai_summary || ad.page_offer);
 
   function runDecode() {
     setNote(null);

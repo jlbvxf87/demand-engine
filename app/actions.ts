@@ -261,7 +261,9 @@ export async function recreate(
       | null;
 
     // 1. Decode the landing page first (best-effort) so the copy is sharper.
-    if (ad && ad.crawl_status !== "done") {
+    //    Skip if already done, or already errored (uncrawlable destination) — no
+    //    point re-firing a guaranteed-failing crawl on every recreate.
+    if (ad && ad.crawl_status !== "done" && ad.crawl_status !== "error") {
       await callRoute("/api/spy/crawl", { ad_id: adId });
     }
 
@@ -509,8 +511,12 @@ async function persistVideo(sourceUrl: string, id: string): Promise<string | nul
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       },
       cache: "no-store",
+      // Bounded so a hung/slow CDN fetch can't stall the whole pollVideoJobs tick.
+      signal: AbortSignal.timeout(25000),
     });
     if (!res.ok) return null;
+    // Don't buffer absurd payloads into a serverless function's heap.
+    if (Number(res.headers.get("content-length") || 0) > 200 * 1024 * 1024) return null;
     const buffer = Buffer.from(await res.arrayBuffer());
     if (buffer.byteLength < 1024) return null; // truncated / error page, not a real video
     const sb = getServiceClient();
