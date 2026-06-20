@@ -641,6 +641,7 @@ export async function createStoryboard(input: {
     const storyId = (story as { id: string }).id;
 
     let created = 0;
+    let sceneErr: string | null = null;
     for (let i = 0; i < clipCount; i++) {
       const scene = scenes[i];
       const img = imgs[i] ?? null; // null for text-to-video scenes
@@ -672,7 +673,8 @@ export async function createStoryboard(input: {
         });
         await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);
         created++;
-      } catch {
+      } catch (e) {
+        sceneErr = e instanceof Error ? e.message : "submit failed";
         await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", id);
       }
     }
@@ -680,7 +682,7 @@ export async function createStoryboard(input: {
     revalidatePath("/publish");
     if (created === 0) {
       await sb.from("storyboards").update({ status: "failed" }).eq("id", storyId);
-      return { ok: false, error: "All scenes failed to submit" };
+      return { ok: false, error: sceneErr ? `Video render failed — ${sceneErr}` : "All scenes failed to submit" };
     }
     return { ok: true, data: { storyboard_id: storyId, scenes: created } };
   } catch (e) {
@@ -735,6 +737,7 @@ export async function replicate(input: {
   try {
     const sb = getServiceClient();
     let created = 0;
+    let lastErr: string | null = null;
     for (let i = 0; i < count; i++) {
       const { data: row } = await sb
         .from("ad_creatives")
@@ -762,12 +765,14 @@ export async function replicate(input: {
         });
         await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);
         created++;
-      } catch {
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : "submit failed";
         await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", id);
       }
     }
     revalidatePath("/publish");
-    if (created === 0) return { ok: false, error: "All variants failed to submit" };
+    // Surface the real reason (e.g. "Credits insufficient…") instead of a generic message.
+    if (created === 0) return { ok: false, error: lastErr ? `Video render failed — ${lastErr}` : "All variants failed to submit" };
     return { ok: true, data: { created } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Replicate failed" };
