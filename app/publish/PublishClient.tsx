@@ -18,7 +18,7 @@ import {
 import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat, Tabs } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
-import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
+import { VIDEO_PROVIDERS, providerLabel, VOICES, DEFAULT_VOICE, type VideoProvider } from "@/lib/video";
 import { renderVideo, renderSpokesperson, pollVideoJobs, deleteCreative } from "@/app/actions";
 
 // "spokesperson" is a render mode (lip-synced voice), not a base video model.
@@ -78,6 +78,7 @@ export default function PublishClient({
   const router = useRouter();
   const [target, setTarget] = useState("meta");
   const [model, setModel] = useState<RenderModel>("seedance");
+  const [voice, setVoice] = useState(DEFAULT_VOICE);
   const [review, setReview] = useState<Creative | null>(null);
   const [mode, setMode] = useState("replicate");
   const [pending, startTransition] = useTransition();
@@ -116,7 +117,7 @@ export default function PublishClient({
   // Spokesperson is a different render path (TTS → lip-sync); everything else is
   // a normal video model. One helper routes to the right action.
   function doRender(id: string, m: RenderModel) {
-    return m === "spokesperson" ? renderSpokesperson(id) : renderVideo(id, m);
+    return m === "spokesperson" ? renderSpokesperson(id, voice) : renderVideo(id, m);
   }
 
   function render(id: string, m: RenderModel) {
@@ -272,6 +273,22 @@ export default function PublishClient({
               {pending ? <Loader2 size={14} className="animate-spin" /> : <Clapperboard size={14} />}
               Render {stills.length} still{stills.length > 1 ? "s" : ""}
             </button>
+          )}
+          {model === "spokesperson" && (
+            <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-[13px]">
+              <span className="font-semibold text-[var(--color-ink-muted)]">Voice</span>
+              <select
+                value={voice}
+                onChange={(e) => setVoice(e.target.value)}
+                className="bg-transparent text-[13px] font-bold outline-none"
+              >
+                {VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           {model === "spokesperson" && (
             <span className="w-full text-[11px] text-[var(--color-ink-muted)]">

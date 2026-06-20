@@ -631,7 +631,7 @@ export async function pollVideoJobs(): Promise<ActionResult> {
  * this kicks off stage 1 (TTS); advanceSpokesperson() (poll loop + cron) carries
  * it through lip-sync to a finished video.
  */
-export async function renderSpokesperson(creativeId: string): Promise<ActionResult> {
+export async function renderSpokesperson(creativeId: string, voice?: string): Promise<ActionResult> {
   try {
     const sb = getServiceClient();
     const { data } = await sb
@@ -649,7 +649,7 @@ export async function renderSpokesperson(creativeId: string): Promise<ActionResu
     const script = [cr.hook_text, cr.bridge_text, cr.cta_text].filter(Boolean).join(" ").trim();
     if (!script) return { ok: false, error: "No copy to voice — add script text first." };
 
-    const { taskId } = await submitTTS(script);
+    const { taskId } = await submitTTS(script, voice || undefined);
     const { error: upErr } = await sb
       .from("ad_creatives")
       .update({
@@ -682,15 +682,26 @@ export async function createStoryboard(input: {
   provider?: string;
   durationPerClip?: number;
   sceneCount?: number; // used when no reference frames are uploaded (text-to-video scenes)
+  spokesperson?: boolean; // each scene = the person speaking that scene's voiceover (lip-synced)
+  voice?: string;
 }): Promise<ActionResult> {
   const provider = input.provider ?? "seedance";
   if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
   const imgs = (input.imageUrls || []).filter(Boolean);
-  // Reference frames drive the scene count; otherwise use the chosen scene count
-  // and render each scene from text (no upload required).
-  const clipCount = imgs.length >= 2 ? imgs.length : Math.max(0, Math.floor(input.sceneCount ?? 0));
+  const spokesperson = !!input.spokesperson;
+  // Spokesperson: the scene count comes from the picker and ONE face drives every
+  // scene (the person speaks each scene's lines). Otherwise reference frames drive
+  // the count, else the chosen scene count (text-to-video).
+  const clipCount = spokesperson
+    ? Math.max(0, Math.floor(input.sceneCount ?? 0)) || (imgs.length >= 2 ? imgs.length : 0)
+    : imgs.length >= 2
+      ? imgs.length
+      : Math.max(0, Math.floor(input.sceneCount ?? 0));
   if (clipCount < 2) {
-    return { ok: false, error: "Add 2+ reference frames, or pick a scene count of 2 or more." };
+    return { ok: false, error: "Pick a scene count of 2 or more (or add 2+ reference frames)." };
+  }
+  if (spokesperson && imgs.length < 1) {
+    return { ok: false, error: "Spokesperson stories need a reference face — upload at least one frame of the person." };
   }
   const prompt = (input.prompt || "").trim();
   if (!prompt) return { ok: false, error: "A story brief is required" };
@@ -704,7 +715,7 @@ export async function createStoryboard(input: {
       .from("storyboards")
       .insert({
         prompt,
-        provider,
+        provider: spokesperson ? "spokesperson" : provider,
         clip_count: clipCount,
         duration_per_clip: durationPerClip,
         status: "generating",
@@ -720,6 +731,44 @@ export async function createStoryboard(input: {
     let sceneErr: string | null = null;
     for (let i = 0; i < clipCount; i++) {
       const scene = scenes[i];
+
+      if (spokesperson) {
+        // Each scene speaks its own voiceover line: insert a spokesperson scene
+        // (TTS now), then advanceSpokesperson() lip-syncs that audio onto the
+        // face. One face (imgs[0]) is reused unless per-scene frames were given.
+        const face = imgs[i] ?? imgs[0];
+        const vo = (scene.voiceover_lines || scene.scene_summary || prompt).trim();
+        const { data: row } = await sb
+          .from("ad_creatives")
+          .insert({
+            storyboard_id: storyId,
+            scene_index: i,
+            hook_text: scene.scene_summary,
+            image_prompt: scene.scene_prompt,
+            image_url: face,
+            hook_type: "scene",
+            platform: "meta",
+            creative_type: "scene",
+            video_provider: "spokesperson",
+            video_status: "rendering",
+            render_stage: "tts",
+            video_attempts: 1,
+          })
+          .select("id")
+          .single();
+        const id = (row as { id: string } | null)?.id;
+        if (!id) continue;
+        try {
+          const { taskId } = await submitTTS(vo, input.voice || undefined);
+          await sb.from("ad_creatives").update({ tts_job_id: taskId }).eq("id", id);
+          created++;
+        } catch (e) {
+          sceneErr = e instanceof Error ? e.message : "voice submit failed";
+          await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", id);
+        }
+        continue;
+      }
+
       const img = imgs[i] ?? null; // null for text-to-video scenes
       const { data: row } = await sb
         .from("ad_creatives")

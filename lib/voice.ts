@@ -1,6 +1,7 @@
 import "server-only";
 import { getServiceClient } from "@/lib/supabase/server";
 import { persistVideoToStorage } from "@/lib/persist";
+import { DEFAULT_VOICE } from "@/lib/video";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Spokesperson voice layer. Turns the copy we already generate into a real
@@ -18,8 +19,6 @@ type SB = ReturnType<typeof getServiceClient>;
 const KIE_BASE = (process.env.KIE_API_BASE_URL || "https://api.kie.ai").replace(/\/$/, "");
 const TTS_MODEL = "elevenlabs/text-to-dialogue-v3";
 const LIPSYNC_MODEL = "kling/ai-avatar-standard"; // ≤5min audio, 720p — robust to script length
-// A natural, energetic default narration voice (one of Kie's supported voice ids).
-export const DEFAULT_VOICE = "EkK5I93UQWFDigLMpZcX";
 
 async function createTask(model: string, input: Record<string, unknown>): Promise<{ taskId: string }> {
   const key = process.env.KIE_API_KEY;
@@ -96,6 +95,7 @@ type SpokesRow = {
   tts_job_id: string | null;
   t2v_job_id: string | null;
   image_url: string | null;
+  image_prompt: string | null;
   video_status: string;
 };
 
@@ -110,7 +110,7 @@ export async function advanceSpokesperson(sb: SB): Promise<number> {
   let advanced = 0;
   const { data } = await sb
     .from("ad_creatives")
-    .select("id, render_stage, tts_job_id, t2v_job_id, image_url, video_status")
+    .select("id, render_stage, tts_job_id, t2v_job_id, image_url, image_prompt, video_status")
     .eq("video_provider", "spokesperson")
     .eq("video_status", "rendering")
     .in("render_stage", ["tts", "lipsync"]);
@@ -133,7 +133,7 @@ export async function advanceSpokesperson(sb: SB): Promise<number> {
           // forever at the tts stage — the user can re-render.
           let lipsyncId: string;
           try {
-            ({ taskId: lipsyncId } = await submitLipsync(r.image_url, j.url));
+            ({ taskId: lipsyncId } = await submitLipsync(r.image_url, j.url, r.image_prompt || ""));
           } catch {
             await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", r.id);
             advanced++;

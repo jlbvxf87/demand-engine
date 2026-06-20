@@ -95,11 +95,18 @@ export async function reconcileStoryboards(sb: SB, origin: string): Promise<void
 
     // ── 2. Stitch when settled ────────────────────────────────────────────────
     const allReady = rows.every((r) => r.video_status === "ready" && r.video_url);
-    const settled = rows.every(
-      (r) =>
-        (r.video_status === "ready" && r.video_url) ||
-        (r.video_status === "failed" && (r.video_attempts ?? 1) >= MAX_SCENE_ATTEMPTS),
-    );
+    const settled = rows.every((r) => {
+      if (r.video_status === "ready" && r.video_url) return true;
+      if (r.video_status === "failed") {
+        // A failed scene is settled once it has no retry path left. Video scenes
+        // self-heal up to MAX_SCENE_ATTEMPTS; spokesperson scenes (not a base
+        // video provider) have no self-heal here, so a failure is terminal.
+        const p = r.video_provider || s.provider;
+        const retryable = !!p && isVideoProvider(p) && (r.video_attempts ?? 1) < MAX_SCENE_ATTEMPTS;
+        return !retryable;
+      }
+      return false;
+    });
     if (!allReady && !settled) continue; // still rendering / retrying
 
     const worker = process.env.STITCH_WORKER_URL;

@@ -42,3 +42,21 @@ export function providerLabel(p: string | null | undefined): string {
 export function isVideoProvider(p: string): p is VideoProvider {
   return p === "seedance" || p === "kling" || p === "sora" || p === "veo" || p === "runway";
 }
+
+/* ── Spokesperson voices (Kie elevenlabs/text-to-dialogue-v3 voice ids) ──────
+   A curated set from Kie's supported list, picked for natural ad/UGC narration —
+   female-first since most of these creatives feature a female presenter. */
+export type Voice = { id: string; label: string };
+export const VOICES: Voice[] = [
+  { id: "hpp4J3VqNfWAUOO0d1Us", label: "Bella — bright & warm (F)" },
+  { id: "kPzsL2i3teMYv0FxEYQ6", label: "Brittney — fun, youthful UGC (F)" },
+  { id: "Sm1seazb4gs7RSlUVw7c", label: "Anika — friendly & engaging (F)" },
+  { id: "lcMyyd2HUfFzxdCaC4Ta", label: "Lucy — fresh & casual (F)" },
+  { id: "BZgkqPqms7Kj9ulSkVzn", label: "Eve — energetic & happy (F)" },
+  { id: "6aDn1KB0hjpdcocrUkmq", label: "Tiffany — natural & welcoming (F)" },
+  { id: "TX3LPaxmHKxFdv7VOQHJ", label: "Liam — energetic creator (M)" },
+  { id: "UgBBYS2sOqTuMpoF3BR0", label: "Mark — natural conversation (M)" },
+  { id: "nPczCjzI2devNBz1zQrb", label: "Brian — deep & comforting (M)" },
+  { id: "EkK5I93UQWFDigLMpZcX", label: "James — husky & bold (M)" },
+];
+export const DEFAULT_VOICE = VOICES[0].id;

@@ -4,7 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { X, Loader2, ImagePlus, Clapperboard } from "lucide-react";
 import { Card } from "@/components/ui";
-import { VIDEO_PROVIDERS, PROVIDER_DURATIONS, type VideoProvider } from "@/lib/video";
+import { VIDEO_PROVIDERS, PROVIDER_DURATIONS, VOICES, DEFAULT_VOICE, type VideoProvider } from "@/lib/video";
 import { uploadReference, createStoryboard } from "@/app/actions";
 
 const ACCENT = "var(--color-publish)";
@@ -17,14 +17,17 @@ export default function StoryboardPanel() {
   const [model, setModel] = useState<VideoProvider>("seedance");
   const [duration, setDuration] = useState(5);
   const [sceneCount, setSceneCount] = useState(4);
+  const [spokesperson, setSpokesperson] = useState(false);
+  const [voice, setVoice] = useState(DEFAULT_VOICE);
   const [uploading, setUploading] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
   const durations = PROVIDER_DURATIONS[model];
   // Reference frames (if added) drive the scene count; otherwise use the picker.
+  // In spokesperson mode one face is reused, so the picker always drives count.
   const usingImages = images.length >= 2;
-  const scenes = usingImages ? images.length : sceneCount;
+  const scenes = spokesperson ? sceneCount : usingImages ? images.length : sceneCount;
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
@@ -48,18 +51,23 @@ export default function StoryboardPanel() {
   }
 
   function generate() {
-    if (images.length === 1) {
+    if (!prompt.trim()) return setNote("Add a story brief");
+    if (spokesperson) {
+      if (images.length < 1)
+        return setNote("Spokesperson needs a reference face — add at least one frame of the person.");
+    } else if (images.length === 1) {
       return setNote("Add a 2nd frame (one per scene), or remove it to generate scenes from your brief.");
     }
-    if (!prompt.trim()) return setNote("Add a story brief");
     setNote(null);
     startTransition(async () => {
       const r = await createStoryboard({
-        imageUrls: usingImages ? images : [],
-        sceneCount: usingImages ? undefined : sceneCount,
+        imageUrls: spokesperson ? images : usingImages ? images : [],
+        sceneCount: spokesperson ? sceneCount : usingImages ? undefined : sceneCount,
         prompt,
         provider: model,
         durationPerClip: duration,
+        spokesperson,
+        voice: spokesperson ? voice : undefined,
       });
       if (!r.ok) {
         setNote(r.error || "Storyboard failed");
@@ -79,6 +87,42 @@ export default function StoryboardPanel() {
         as a clip, and they&apos;re stitched into one video. Optionally drop a reference frame per scene
         to lock the look.
       </p>
+
+      {/* Spokesperson toggle + voice picker */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setSpokesperson((v) => !v)}
+          className="inline-flex items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
+          style={
+            spokesperson
+              ? { background: ACCENT, color: "white", borderColor: ACCENT }
+              : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
+          }
+        >
+          🎤 {spokesperson ? "Spokesperson on" : "Spokesperson"}
+        </button>
+        {spokesperson && (
+          <select
+            value={voice}
+            onChange={(e) => setVoice(e.target.value)}
+            title="Voice that reads your script"
+            className="rounded-[var(--radius-pill)] border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-1.5 text-[12.5px] font-bold outline-none"
+          >
+            {VOICES.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.label}
+              </option>
+            ))}
+          </select>
+        )}
+        {spokesperson && (
+          <span className="w-full text-[11px] text-[var(--color-ink-muted)]">
+            Each scene = your reference person speaking that scene&apos;s line (lip-synced). Add one clear
+            face below; the chosen voice reads the script.
+          </span>
+        )}
+      </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
         {images.map((url, i) => (
@@ -109,7 +153,9 @@ export default function StoryboardPanel() {
           ) : (
             <>
               <ImagePlus size={18} />
-              <span className="text-[9px] font-semibold leading-tight">Add frames<br />(optional)</span>
+              <span className="text-[9px] font-semibold leading-tight">
+                {spokesperson ? <>Add face<br />(required)</> : <>Add frames<br />(optional)</>}
+              </span>
             </>
           )}
         </button>
