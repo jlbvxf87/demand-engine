@@ -659,6 +659,7 @@ export async function renderSpokesperson(creativeId: string, voice?: string): Pr
         tts_job_id: taskId,
         t2v_job_id: null,
         video_url: null,
+        vo_script: script,
       })
       .eq("id", creativeId);
     if (upErr) return { ok: false, error: `Couldn't start spokesperson render — ${upErr.message}` };
@@ -753,6 +754,7 @@ export async function createStoryboard(input: {
             video_status: "rendering",
             render_stage: "tts",
             video_attempts: 1,
+            vo_script: vo,
           })
           .select("id")
           .single();

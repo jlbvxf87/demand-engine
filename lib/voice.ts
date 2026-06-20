@@ -20,22 +20,50 @@ const KIE_BASE = (process.env.KIE_API_BASE_URL || "https://api.kie.ai").replace(
 const TTS_MODEL = "elevenlabs/text-to-dialogue-v3";
 const LIPSYNC_MODEL = "kling/ai-avatar-standard"; // ≤5min audio, 720p — robust to script length
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Submit a Kie job, retrying TRANSIENT failures (network/timeout, 429, 5xx —
+ * incl. Kie's "internal error, please try again later") up to 3 attempts with
+ * backoff. Surfaces 4xx validation errors immediately (they won't change).
+ */
 async function createTask(model: string, input: Record<string, unknown>): Promise<{ taskId: string }> {
   const key = process.env.KIE_API_KEY;
   if (!key) throw new Error("KIE_API_KEY not set — add it to env to enable voice render.");
-  const res = await fetch(`${KIE_BASE}/api/v1/jobs/createTask`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, input }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(30000),
-  });
-  const j = (await res.json().catch(() => ({}))) as {
-    msg?: string; message?: string; data?: { taskId?: string };
-  };
-  const taskId = j?.data?.taskId;
-  if (!taskId) throw new Error(j?.msg || j?.message || `Kie HTTP ${res.status}`);
-  return { taskId };
+  const MAX = 3;
+  let lastErr = "Kie submit failed";
+  for (let attempt = 1; attempt <= MAX; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${KIE_BASE}/api/v1/jobs/createTask`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model, input }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : "network error";
+      if (attempt < MAX) {
+        await sleep(700 * attempt);
+        continue;
+      }
+      throw new Error(`Kie submit failed after ${MAX} tries — ${lastErr}`);
+    }
+    const j = (await res.json().catch(() => ({}))) as {
+      msg?: string; message?: string; data?: { taskId?: string };
+    };
+    const taskId = j?.data?.taskId;
+    if (taskId) return { taskId };
+    lastErr = j?.msg || j?.message || `Kie HTTP ${res.status}`;
+    const transient = res.status === 429 || res.status >= 500;
+    if (transient && attempt < MAX) {
+      await sleep(700 * attempt);
+      continue;
+    }
+    throw new Error(lastErr);
+  }
+  throw new Error(lastErr);
 }
 
 /** Submit a TTS job for `text`. Returns the Kie taskId to poll. */
@@ -89,6 +117,10 @@ export async function pollKieJob(taskId: string): Promise<JobResult> {
   return { state: "processing" };
 }
 
+// A spokesperson clip gets at most this many submit attempts across its life
+// (initial + retries) before a failure is treated as terminal.
+const MAX_SPOKES_ATTEMPTS = 3;
+
 type SpokesRow = {
   id: string;
   render_stage: string | null;
@@ -96,47 +128,59 @@ type SpokesRow = {
   t2v_job_id: string | null;
   image_url: string | null;
   image_prompt: string | null;
+  vo_script: string | null;
+  vo_audio_url: string | null;
+  video_attempts: number | null;
   video_status: string;
 };
 
 /**
- * Advance every in-flight spokesperson render. Stage 1 (tts): when the voice is
- * ready, kick off the lip-sync with the clip's still + that audio. Stage 2
- * (lipsync): when the talking video is ready, persist it and mark ready. Each
- * transition is a compare-and-swap so the client loop and the cron can both call
- * this safely. Returns how many rows advanced.
+ * Advance every in-flight spokesperson render through its two stages, RESILIENT
+ * to transient Kie failures. Stage 1 (tts): when the voice is ready, kick off the
+ * lip-sync with the still + audio; if the TTS job failed transiently, re-submit
+ * it (up to the attempt cap). Stage 2 (lipsync): when the talking video is ready,
+ * persist + mark ready; if the lip-sync job failed transiently, re-submit it.
+ * Only after attempts are exhausted is a clip marked failed. Each transition is a
+ * compare-and-swap so the client loop and cron can both call this safely.
  */
 export async function advanceSpokesperson(sb: SB): Promise<number> {
   let advanced = 0;
   const { data } = await sb
     .from("ad_creatives")
-    .select("id, render_stage, tts_job_id, t2v_job_id, image_url, image_prompt, video_status")
+    .select(
+      "id, render_stage, tts_job_id, t2v_job_id, image_url, image_prompt, vo_script, vo_audio_url, video_attempts, video_status",
+    )
     .eq("video_provider", "spokesperson")
     .eq("video_status", "rendering")
     .in("render_stage", ["tts", "lipsync"]);
   const rows = (data || []) as SpokesRow[];
 
+  const fail = async (id: string) => {
+    await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", id);
+    advanced++;
+  };
+
   for (const r of rows) {
+    const attempts = r.video_attempts ?? 1;
+    const canRetry = attempts < MAX_SPOKES_ATTEMPTS;
     try {
       // ── Stage 1: TTS → kick off lip-sync ──────────────────────────────────
       if (r.render_stage === "tts" && r.tts_job_id) {
         const j = await pollKieJob(r.tts_job_id);
+
         if (j.state === "completed" && j.url) {
           if (!r.image_url) {
-            // No face to drive the lip-sync — can't finish as a spokesperson clip.
-            await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", r.id);
-            advanced++;
+            await fail(r.id); // no face to lip-sync onto
             continue;
           }
-          // Submit the lip-sync. A submit failure here is usually permanent (bad
-          // input / model rejection), so mark the row failed rather than looping
-          // forever at the tts stage — the user can re-render.
           let lipsyncId: string;
           try {
             ({ taskId: lipsyncId } = await submitLipsync(r.image_url, j.url, r.image_prompt || ""));
           } catch {
-            await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", r.id);
-            advanced++;
+            // submit blew up even after createTask's own retries — count an
+            // attempt and let the next tick retry, or fail once exhausted.
+            if (canRetry) await sb.from("ad_creatives").update({ video_attempts: attempts + 1 }).eq("id", r.id);
+            else await fail(r.id);
             continue;
           }
           const { data: cas } = await sb
@@ -147,8 +191,20 @@ export async function advanceSpokesperson(sb: SB): Promise<number> {
             .select("id");
           if (cas && cas.length > 0) advanced++;
         } else if (j.state === "failed") {
-          await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", r.id);
-          advanced++;
+          // TTS job failed (often a transient Kie "internal error"). Re-submit
+          // the voiceover if we still have the script and attempts left.
+          if (canRetry && r.vo_script) {
+            const { taskId } = await submitTTS(r.vo_script);
+            await sb
+              .from("ad_creatives")
+              .update({ tts_job_id: taskId, video_attempts: attempts + 1 })
+              .eq("id", r.id)
+              .eq("tts_job_id", r.tts_job_id)
+              .eq("render_stage", "tts");
+            advanced++;
+          } else {
+            await fail(r.id);
+          }
         }
         continue;
       }
@@ -166,8 +222,20 @@ export async function advanceSpokesperson(sb: SB): Promise<number> {
             .select("id");
           if (cas && cas.length > 0) advanced++;
         } else if (j.state === "failed") {
-          await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", r.id);
-          advanced++;
+          // Lip-sync job failed — re-submit it from the same audio + face if we
+          // still have attempts left.
+          if (canRetry && r.image_url && r.vo_audio_url) {
+            const { taskId } = await submitLipsync(r.image_url, r.vo_audio_url, r.image_prompt || "");
+            await sb
+              .from("ad_creatives")
+              .update({ t2v_job_id: taskId, video_attempts: attempts + 1 })
+              .eq("id", r.id)
+              .eq("t2v_job_id", r.t2v_job_id)
+              .eq("render_stage", "lipsync");
+            advanced++;
+          } else {
+            await fail(r.id);
+          }
         }
       }
     } catch {
