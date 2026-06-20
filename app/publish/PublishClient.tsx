@@ -140,6 +140,11 @@ export default function PublishClient({
                     <p className="text-[11.5px] text-[var(--color-ink-muted)]">
                       {s.clip_count} scenes · {providerLabel(s.provider)}
                     </p>
+                    {isStoryFinished(s) && s.scenesReady < s.clip_count && (
+                      <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-warn-soft)] px-1.5 py-0.5 text-[10.5px] font-bold text-[var(--color-warn)]">
+                        ⚠ {s.scenesReady} of {s.clip_count} scenes rendered ({s.clip_count - s.scenesReady} failed)
+                      </span>
+                    )}
                   </div>
                   <StoryStatus s={s} />
                 </div>
@@ -500,6 +505,14 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
       </div>
     </button>
   );
+}
+
+/* A story is "finished" once it's done rendering/stitching — i.e. it has a
+   stitched final OR is no longer actively scripting/generating/stitching. Only
+   then is a short scene count a real failure (vs scenes still on the way). */
+function isStoryFinished(s: Storyboard) {
+  if (s.final_video_url) return true;
+  return !["scripting", "generating", "stitching"].includes(s.status);
 }
 
 /* Status pill for a storyboard row. */

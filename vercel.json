@@ -3,6 +3,10 @@
     {
       "path": "/api/spy/backfill-creatives?limit=30",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/spy/repersist-videos?limit=20",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

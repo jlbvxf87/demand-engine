@@ -517,6 +517,7 @@ export type Storyboard = {
   final_video_url: string | null;
   final_status: string | null;
   created_at: string;
+  scenesReady: number; // scene clips that actually produced a video (ad_creatives with this storyboard_id + a video_url)
 };
 
 /** Multi-scene storyboards (their scene clips are ad_creatives with this storyboard_id). */
@@ -529,7 +530,27 @@ export async function getStoryboards(limit = 8): Promise<Storyboard[]> {
       .order("created_at", { ascending: false })
       .limit(limit);
     if (error || !data) return [];
-    return data as Storyboard[];
+
+    // For each storyboard, count how many of its scene clips actually rendered a
+    // video (ad_creatives rows with this storyboard_id AND a non-null video_url).
+    // This surfaces silently-dropped scenes when scenesReady < clip_count.
+    const rows = data as Omit<Storyboard, "scenesReady">[];
+    return await Promise.all(
+      rows.map(async (s) => {
+        let scenesReady = 0;
+        try {
+          const { count } = await sb
+            .from("ad_creatives")
+            .select("id", { count: "exact", head: true })
+            .eq("storyboard_id", s.id)
+            .not("video_url", "is", null);
+          scenesReady = count ?? 0;
+        } catch {
+          scenesReady = 0;
+        }
+        return { ...s, scenesReady } as Storyboard;
+      })
+    );
   } catch {
     return [];
   }

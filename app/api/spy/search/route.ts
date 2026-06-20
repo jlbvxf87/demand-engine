@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { isAdminAuthed } from '@/lib/admin-auth';
 import { isMachineAuthed } from '@/lib/machine-auth';
 import { getServiceClient } from '@/lib/supabase/server';
-import { looksLikeUrl } from '@/lib/url';
+import { looksLikeUrl, toSiteUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -143,7 +143,11 @@ type ResolvedAdvertiser = {
 /** Prefer a caption that's a clean URL (no spaces); else the first caption for context. */
 function pickDest(captions?: string[]): string | null {
   const list = (captions ?? []).map((c) => (c || '').trim()).filter(Boolean);
-  return list.find(looksLikeUrl) ?? list[0] ?? null;
+  // Normalize a URL-looking caption to a fetchable https URL at ingestion so
+  // downstream consumers get a usable link. A non-URL caption (a disclaimer
+  // with spaces) is kept RAW so the UI's "Ad caption: …" fallback still works.
+  const u = list.find(looksLikeUrl);
+  return u ? (toSiteUrl(u) ?? u) : (list[0] ?? null);
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { isAdminAuthed } from '@/lib/admin-auth';
 import { isMachineAuthed } from '@/lib/machine-auth';
 import { getServiceClient } from '@/lib/supabase/server';
 import { toSiteUrl } from '@/lib/url';
+import { BROWSER_UA } from "@/lib/http";
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
   try {
     const pageRes = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': BROWSER_UA,
         'Accept': 'text/html,application/xhtml+xml',
       },
       signal: AbortSignal.timeout(12000),

@@ -3,6 +3,7 @@ import { isAdminAuthed } from "@/lib/admin-auth";
 import { isMachineAuthed } from "@/lib/machine-auth";
 import { getServiceClient } from "@/lib/supabase/server";
 import { toAdRow } from "@/lib/data";
+import { toSiteUrl } from "@/lib/url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -142,7 +143,9 @@ export async function POST(req: Request) {
     page_name: advertiser || "Unknown advertiser",
     ad_body: body || scraped.page_text || null,
     ad_snapshot_url: `https://www.facebook.com/ads/archive/render_ad/?id=${id}`,
-    destination_url: scraped.link || null,
+    // Normalize a real link to a fetchable https URL at ingestion; keep a
+    // non-URL value RAW (not null) so the UI's caption fallback still works.
+    destination_url: scraped.link ? (toSiteUrl(scraped.link) ?? scraped.link) : null,
     creative_media_url: scraped.media_url || null,
     creative_media_type: scraped.media_type || (scraped.media_url ? "image" : null),
     crawl_status: "pending",
