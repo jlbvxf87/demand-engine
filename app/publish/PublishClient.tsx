@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Play,
@@ -35,6 +35,31 @@ const TARGETS = [
 
 function isRendering(c: Creative) {
   return c.video_status === "queued" || c.video_status === "rendering";
+}
+
+function fmtElapsed(secs: number) {
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+}
+
+/** Seconds a tile has been observed rendering (client-side; resets when it
+ *  finishes). Gives an in-progress render a visible, counting-up timer. */
+function useRenderElapsed(active: boolean): number {
+  const [secs, setSecs] = useState(0);
+  const startRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!active) {
+      startRef.current = null;
+      setSecs(0);
+      return;
+    }
+    startRef.current = Date.now();
+    setSecs(0);
+    const iv = setInterval(() => {
+      if (startRef.current != null) setSecs(Math.floor((Date.now() - startRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [active]);
+  return secs;
 }
 
 export default function PublishClient({
@@ -156,6 +181,22 @@ export default function PublishClient({
                     <p className="text-[11.5px] text-[var(--color-ink-muted)]">
                       {s.clip_count} scenes · {providerLabel(s.provider)}
                     </p>
+                    {!isStoryFinished(s) && (
+                      <div className="mt-1.5 max-w-[210px]">
+                        <p className="text-[10.5px] font-bold tabular-nums text-[var(--color-ink-muted)]">
+                          {s.scenesReady} of {s.clip_count} scenes ready
+                        </p>
+                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]">
+                          <div
+                            className="h-full rounded-full transition-[width] duration-500"
+                            style={{
+                              width: `${Math.round((s.scenesReady / Math.max(1, s.clip_count)) * 100)}%`,
+                              background: ACCENT,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                     {isStoryFinished(s) && s.scenesReady < s.clip_count && (
                       <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-warn-soft)] px-1.5 py-0.5 text-[10.5px] font-bold text-[var(--color-warn)]">
                         ⚠ {s.scenesReady} of {s.clip_count} scenes rendered ({s.clip_count - s.scenesReady} failed)
@@ -452,6 +493,7 @@ export default function PublishClient({
 /* One vertical reel tile in the Studio grid. */
 function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
   const rendering = isRendering(c);
+  const elapsed = useRenderElapsed(rendering);
   return (
     <button
       onClick={onClick}
@@ -481,6 +523,13 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
         </div>
       )}
 
+      {/* Rendering "alive" overlay: diagonal sweep + pulsing brand glow */}
+      {rendering && (
+        <span className="de-render-sweep pointer-events-none absolute inset-0">
+          <span className="absolute inset-x-0 bottom-0 h-1/3 animate-pulse bg-gradient-to-t from-[rgba(23,46,215,0.45)] to-transparent" />
+        </span>
+      )}
+
       {/* Top badges */}
       <div className="pointer-events-none absolute inset-x-2 top-2 flex items-start justify-between gap-1">
         <span
@@ -491,8 +540,8 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
             (c.video_url ? "Video" : "Still")}
         </span>
         {rendering && (
-          <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold" style={{ background: "rgba(23,46,215,0.85)", color: "#fff" }}>
-            <Loader2 size={9} className="animate-spin" /> Rendering
+          <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold tabular-nums" style={{ background: "rgba(23,46,215,0.85)", color: "#fff" }}>
+            <Loader2 size={9} className="animate-spin" /> Rendering {fmtElapsed(elapsed)}
           </span>
         )}
         {c.video_status === "failed" && (

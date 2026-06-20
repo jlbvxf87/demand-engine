@@ -86,6 +86,33 @@ h3 {
   animation: de-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Rendering "alive" sweep — a diagonal light bar that travels across a tile
+   while its clip is generating, so an in-progress render reads as active. */
+@keyframes de-sweep {
+  0% {
+    transform: translateX(-130%);
+  }
+  60%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+.de-render-sweep {
+  overflow: hidden;
+}
+.de-render-sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 65%
+  );
+  animation: de-sweep 1.8s ease-in-out infinite;
+}
+
 /* Skeleton shimmer */
 @keyframes shimmer {
   0% {
