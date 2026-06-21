@@ -96,17 +96,6 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
             }
           : { prompt: o.prompt.slice(0, 5000), aspect_ratio: "9:16", model: "veo3" },
       };
-    case "runway":
-      return {
-        url: `${KIE_BASE}/api/v1/runway/generate`,
-        body: {
-          prompt: o.prompt.slice(0, 4000),
-          duration: dur <= 7 ? 5 : 10,
-          quality: "720p",
-          aspectRatio: "9:16",
-          ...(i2v ? { imageUrl: imgs[0] } : {}),
-        },
-      };
   }
 }
 
@@ -159,10 +148,10 @@ export async function submitKieVideo(o: SubmitOpts): Promise<{ taskId: string }>
       data?: { taskId?: string; task_id?: string; id?: string };
     };
 
-    // The unified jobs endpoint returns {code:200, data:{taskId}}, but the VEO and
-    // RUNWAY families (/veo/generate, /runway/generate) are a different API and may
-    // nest the id under a different key or omit the 200 envelope. Accept the first
-    // non-empty task id from any known shape rather than relying on code === 200.
+    // The unified jobs endpoint returns {code:200, data:{taskId}}, but the VEO
+    // family (/veo/generate) is a different API and may nest the id under a
+    // different key or omit the 200 envelope. Accept the first non-empty task id
+    // from any known shape rather than relying on code === 200.
     const taskId =
       json?.data?.taskId ||
       json?.data?.task_id ||
@@ -245,20 +234,6 @@ export async function pollKieVideo(provider: VideoProvider, taskId: string): Pro
       return u ? { state: "completed", videoUrl: u } : { state: "failed", error: "no url" };
     }
     if (d.successFlag === 2 || d.successFlag === 3) return { state: "failed", error: d.errorMessage || "failed" };
-    return { state: "processing" };
-  }
-
-  if (provider === "runway") {
-    const r = await fetch(`${KIE_BASE}/api/v1/runway/record-detail?taskId=${tid}`, { headers, cache: "no-store" });
-    const j = (await r.json().catch(() => ({}))) as {
-      data?: { state?: string; videoInfo?: { videoUrl?: string } };
-    };
-    const d = j?.data ?? {};
-    if (d.state === "success") {
-      const u = d.videoInfo?.videoUrl;
-      return u ? { state: "completed", videoUrl: u } : { state: "failed", error: "no url" };
-    }
-    if (d.state === "fail") return { state: "failed", error: "failed" };
     return { state: "processing" };
   }
 

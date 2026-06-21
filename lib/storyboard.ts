@@ -23,7 +23,6 @@ const MAX_CHARS: Record<VideoProvider, number> = {
   seedance: 2500,
   sora: 10000,
   veo: 5000,
-  runway: 4000,
 };
 
 const ARC: Record<number, string> = {

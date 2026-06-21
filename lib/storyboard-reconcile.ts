@@ -98,9 +98,8 @@ export async function reconcileStoryboards(sb: SB, origin: string): Promise<void
     const settled = rows.every((r) => {
       if (r.video_status === "ready" && r.video_url) return true;
       if (r.video_status === "failed") {
-        // A failed scene is settled once it has no retry path left. Video scenes
-        // self-heal up to MAX_SCENE_ATTEMPTS; spokesperson scenes (not a base
-        // video provider) have no self-heal here, so a failure is terminal.
+        // A failed scene is settled once it has no retry path left — i.e. it has
+        // exhausted its self-heal attempts (MAX_SCENE_ATTEMPTS).
         const p = r.video_provider || s.provider;
         const retryable = !!p && isVideoProvider(p) && (r.video_attempts ?? 1) < MAX_SCENE_ATTEMPTS;
         return !retryable;
