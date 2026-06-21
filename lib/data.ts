@@ -210,12 +210,21 @@ export async function getWinnerExemplars(brief: string, limit = 6): Promise<stri
       .select("ad_body, brand_ad_count")
       .order("brand_ad_count", { ascending: false })
       .limit(150);
-    const topAds = ((ads || []) as { ad_body: string | null; brand_ad_count: number | null }[])
+    const sortedAds = ((ads || []) as { ad_body: string | null; brand_ad_count: number | null }[])
       .filter((a) => a.ad_body && !isBoilerplate(a.ad_body))
       .map((a) => ({ a, s: rel(a.ad_body) }))
-      .sort((x, y) => y.s - x.s || (y.a.brand_ad_count || 0) - (x.a.brand_ad_count || 0))
-      .slice(0, limit)
-      .map((x) => x.a);
+      .sort((x, y) => y.s - x.s || (y.a.brand_ad_count || 0) - (x.a.brand_ad_count || 0));
+    // Dedupe near-identical copy (a scaled winner repeats across many rows) so the
+    // exemplars show DISTINCT winning patterns, not the same one five times.
+    const seenKeys = new Set<string>();
+    const topAds: { ad_body: string | null; brand_ad_count: number | null }[] = [];
+    for (const { a } of sortedAds) {
+      const k = (a.ad_body || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 80);
+      if (seenKeys.has(k)) continue;
+      seenKeys.add(k);
+      topAds.push(a);
+      if (topAds.length >= limit) break;
+    }
 
     // Decoded hook patterns — the extracted "why it works" from real winners.
     const { data: pats } = await sb
