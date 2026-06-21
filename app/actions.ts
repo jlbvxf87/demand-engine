@@ -695,10 +695,18 @@ export async function createStoryboard(input: {
         .single();
       const id = (row as { id: string } | null)?.id;
       if (!id) continue;
+      // Render each scene per its shot_type: talking-head scenes frame a person
+      // speaking that scene's line (native model voice); b-roll scenes render the
+      // visual as-is.
+      const vo = (scene.voiceover_lines || scene.scene_summary || "").trim();
+      const scenePrompt =
+        scene.shot_type === "broll"
+          ? scene.scene_prompt
+          : `A person looking directly into the camera, speaking this line aloud as a UGC talking-head testimonial: "${vo}". ${scene.scene_prompt} Natural lip movement and spoken delivery.`;
       try {
         const { taskId } = await submitKieVideo({
           provider,
-          prompt: scene.scene_prompt,
+          prompt: scenePrompt,
           mode: img ? "image-to-video" : "text-to-video",
           referenceImageUrls: img ? [img] : null,
           duration: scene.duration || durationPerClip,

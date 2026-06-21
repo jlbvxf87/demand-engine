@@ -16,6 +16,10 @@ export type MasterScene = {
   voiceover_lines: string;
   duration: number;
   clip_role: string;
+  // "talking_head" = a person speaks to camera (says the voiceover_lines aloud);
+  // "broll" = supporting footage, no one speaking to camera. Drives how the clip
+  // is rendered (talking-head framing vs plain visual).
+  shot_type: "talking_head" | "broll";
 };
 
 const MAX_CHARS: Record<VideoProvider, number> = {
@@ -33,7 +37,11 @@ const ARC: Record<number, string> = {
   8: "HOOK → PROBLEM → AGITATE → DISCOVERY → SOLUTION → PROOF → TRANSFORMATION → PAYOFF/CTA",
 };
 
-const SYSTEM = `You are an expert direct-response video creative director specializing in multi-clip advertising narratives. You write a MASTER SCRIPT that tells ONE cohesive story across multiple short video clips. Each clip is generated INDEPENDENTLY by an AI video model from a different reference image — the model sees ONLY one clip's prompt at a time and has NO memory of the others. So every scene_prompt must be a FULL, standalone video prompt (subject, action, camera, lighting, environment, emotional tone), never referencing "the previous clip". Keep one consistent character/look across scenes by restating identity details verbatim each time. UGC, authentic, scroll-stopping, conversion-driven. No on-screen text/logos, no medical procedures, no guaranteed-outcome or therapeutic claims. Respond with valid JSON only — no markdown, no code fences, no explanation.`;
+const SYSTEM = `You are an expert direct-response video creative director specializing in multi-clip advertising narratives. You write a MASTER SCRIPT that tells ONE cohesive story across multiple short video clips. Each clip is generated INDEPENDENTLY by an AI video model from a different reference image — the model sees ONLY one clip's prompt at a time and has NO memory of the others. So every scene_prompt must be a FULL, standalone video prompt (subject, action, camera, lighting, environment, emotional tone), never referencing "the previous clip". Keep one consistent character/look across scenes by restating identity details verbatim each time. UGC, authentic, scroll-stopping, conversion-driven. No on-screen text/logos, no medical procedures, no guaranteed-outcome or therapeutic claims.
+
+For EACH scene set shot_type: use "talking_head" when a single person speaks DIRECTLY TO CAMERA and says that scene's voiceover_lines aloud (hooks, reactions, testimonials, CTAs) — write the scene_prompt as a person looking into the camera speaking; use "broll" for supporting footage where NO ONE speaks to camera (product close-ups, results, lifestyle, demonstrations) — write the scene_prompt as the visual only. Default the hook and the CTA to talking_head.
+
+Respond with valid JSON only — no markdown, no code fences, no explanation.`;
 
 function arcFor(n: number): string {
   return ARC[n] || `${n}-beat hook→...→payoff narrative`;
@@ -61,7 +69,8 @@ Return ONLY this JSON:
       "scene_summary": "one line",
       "voiceover_lines": "2-3 sentences at ~2.5 words/sec",
       "duration": ${durationPerClip},
-      "clip_role": "hook|problem|agitate|solution|proof|payoff|cta"
+      "clip_role": "hook|problem|agitate|solution|proof|payoff|cta",
+      "shot_type": "talking_head | broll"
     }
   ]
 }`;
@@ -83,13 +92,14 @@ Return ONLY this JSON:
     if (m) parsed = JSON.parse(m[0]);
   }
 
-  const scenes = (parsed.scenes || []).slice(0, clipCount).map((s, i) => ({
+  const scenes: MasterScene[] = (parsed.scenes || []).slice(0, clipCount).map((s, i) => ({
     clip_index: i,
     scene_prompt: String(s.scene_prompt || prompt).slice(0, maxChars),
     scene_summary: String(s.scene_summary || `Scene ${i + 1}`),
     voiceover_lines: String(s.voiceover_lines || ""),
     duration: Number(s.duration) || durationPerClip,
     clip_role: String(s.clip_role || (i === 0 ? "hook" : "scene")),
+    shot_type: s.shot_type === "broll" ? "broll" : "talking_head",
   }));
 
   // Pad if the model under-delivered, so we always get clipCount scenes.
@@ -102,6 +112,7 @@ Return ONLY this JSON:
       voiceover_lines: "",
       duration: durationPerClip,
       clip_role: "scene",
+      shot_type: "talking_head",
     });
   }
 
