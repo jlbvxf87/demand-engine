@@ -146,6 +146,54 @@ export async function getCreativesCount(): Promise<number> {
   }
 }
 
+export type SearchBatch = {
+  id: string;
+  keyword: string;
+  ad_count: number;
+  created_at: string;
+};
+
+/** Your recent Meta searches, newest first (Source > Searches tab). Each row is
+ *  one search run; the ads it pulled are spy_ads tagged with this search's id. */
+export async function getSearches(limit = 40): Promise<SearchBatch[]> {
+  try {
+    const sb = getServiceClient();
+    const { data, error } = await sb
+      .from("spy_searches")
+      .select("id, keyword, ad_count, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return (data as Record<string, unknown>[]).map((s) => ({
+      id: String(s.id),
+      keyword: (s.keyword as string) || "(untitled search)",
+      ad_count: Number(s.ad_count ?? 0),
+      created_at: String(s.created_at ?? ""),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** The ads ONE search pulled into the library, highest winner_score first. Lets
+ *  the Source > Searches tab show a single batch on its own (search_id match). */
+export async function getAdsBySearch(searchId: string, limit = 500): Promise<AdRow[]> {
+  if (!searchId) return [];
+  try {
+    const sb = getServiceClient();
+    const { data, error } = await sb
+      .from("spy_ads")
+      .select(AD_COLS)
+      .eq("search_id", searchId)
+      .order("winner_score", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return dedupeByMetaId(data.map(toAdRow));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Text-search the ads ALREADY in your library (not Meta) — by brand, ad copy,
  * destination, or title. Powers the in-app "find a saved ad" box.

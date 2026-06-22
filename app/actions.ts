@@ -6,6 +6,7 @@ import { getServiceClient } from "@/lib/supabase/server";
 import {
   getWinningCreatives,
   searchLibrary as searchLibraryData,
+  getAdsBySearch as getAdsBySearchData,
   getWinnerExemplars,
   type AdRow,
 } from "@/lib/data";
@@ -112,6 +113,16 @@ export async function searchByPage(pageId: string): Promise<ActionResult> {
 export async function findSavedAds(query: string): Promise<{ ok: boolean; rows?: AdRow[] }> {
   try {
     const rows = await searchLibraryData(query, 100);
+    return { ok: true, rows };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** Source > Searches: load only the ads ONE search batch pulled in. */
+export async function loadSearchAds(searchId: string): Promise<{ ok: boolean; rows?: AdRow[] }> {
+  try {
+    const rows = await getAdsBySearchData(searchId, 500);
     return { ok: true, rows };
   } catch {
     return { ok: false };

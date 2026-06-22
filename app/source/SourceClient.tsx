@@ -18,8 +18,8 @@ import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { toSiteUrl, toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
 import { isIndependent } from "@/lib/targeting";
-import { searchAds, fetchCreative, searchByPage, loadCreatives, recreate, sourceFromLink, findSavedAds } from "@/app/actions";
-import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
+import { searchAds, fetchCreative, searchByPage, loadCreatives, recreate, sourceFromLink, findSavedAds, loadSearchAds } from "@/app/actions";
+import type { Advertiser, AdRow, IdentityRollup, ScaledWinner, SearchBatch } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
 
@@ -134,6 +134,90 @@ function FacebookAdPreview({ ad }: { ad: AdRow }) {
   );
 }
 
+/** One ad row — used by the All-ads list and the Searches batch view. `selectable`
+ *  adds the bulk-recreate checkbox (All-ads only). */
+function AdRowCard({
+  c,
+  active,
+  selectable = false,
+  selected = false,
+  onToggle,
+  onOpen,
+}: {
+  c: AdRow;
+  active: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
+  onOpen: () => void;
+}) {
+  const hook = adHook(c.ad_body, c.ad_title, c.page_headline);
+  const dom = toDomain(c.destination_url);
+  const meta = metaAdUrl(c.meta_ad_id);
+  return (
+    <Card className="flex items-center gap-3 p-3" accent={selected || active ? ACCENT : undefined}>
+      {selectable && (
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--color-source)]"
+          title="Select to recreate"
+        />
+      )}
+      <AdThumb
+        src={(c.creative_media_type === "image" ? c.creative_media_url : null) || c.page_screenshot_url}
+        name={c.page_name}
+        size={56}
+      />
+      <button onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <p className="truncate text-[14px] font-bold">{c.page_name || "Advertiser"}</p>
+        <p className="truncate text-[12px] text-[var(--color-ink-muted)]">
+          {dom || "destination not public"} · {c.days_running}d
+        </p>
+        {hook ? (
+          <p className="mt-0.5 line-clamp-1 text-[12px]">{hook}</p>
+        ) : (
+          <p className="mt-0.5 truncate text-[12px] italic text-[var(--color-ink-muted)]">
+            copy not public — open on Meta
+          </p>
+        )}
+        <div className="mt-1.5 flex items-center gap-2">
+          <WinnerBadge badge={c.badge} />
+          <span className="text-[11.5px] font-semibold text-[var(--color-ink-muted)]">
+            Score {Math.round(c.winner_score)}
+          </span>
+        </div>
+      </button>
+      {meta && (
+        <a
+          href={meta}
+          target="_blank"
+          rel="noreferrer"
+          className="flex shrink-0 flex-col items-center gap-0.5"
+          title="Open the real ad on Meta"
+          style={{ color: ACCENT }}
+        >
+          <ExternalLink size={18} />
+          <span className="text-[9px] font-bold">Meta</span>
+        </a>
+      )}
+    </Card>
+  );
+}
+
+/** "Jun 21, 2026 · 6:09 AM"-style stamp for a search batch. */
+function fmtSearchDate(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return (
+    d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
+    " · " +
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+  );
+}
+
 export default function SourceClient({
   advertisers,
   creatives,
@@ -141,6 +225,7 @@ export default function SourceClient({
   scaled,
   verticals,
   creativesTotal,
+  searches,
 }: {
   advertisers: Advertiser[];
   creatives: AdRow[];
@@ -148,6 +233,7 @@ export default function SourceClient({
   scaled: ScaledWinner[];
   verticals: string[];
   creativesTotal: number;
+  searches: SearchBatch[];
 }) {
   const router = useRouter();
   const [tab, setTab] = useState("scaled");
@@ -175,6 +261,10 @@ export default function SourceClient({
   const [libSearching, setLibSearching] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+  // Searches tab — view ONE search batch (by search_id) on its own.
+  const [activeSearch, setActiveSearch] = useState<SearchBatch | null>(null);
+  const [batchAds, setBatchAds] = useState<AdRow[]>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
 
   // Search ads ALREADY in the library (server-side, across ALL of them — not just
   // the loaded page). Drives the primary top search box; jumps to the All-ads
@@ -315,6 +405,21 @@ export default function SourceClient({
     () => scaled.filter((w) => indOk(w.ad)),
     [scaled, independentOnly],
   );
+  // Batch ads run through the same Vertical / Independent filters as the rest.
+  const batchF = useMemo(
+    () => batchAds.filter((a) => vFilter(a.vertical) && indOk(a)),
+    [batchAds, vertical, independentOnly],
+  );
+
+  // Open one search batch: load only the ads tagged with its search_id.
+  async function openSearch(s: SearchBatch) {
+    setActiveSearch(s);
+    setBatchAds([]);
+    setBatchLoading(true);
+    const r = await loadSearchAds(s.id);
+    setBatchLoading(false);
+    setBatchAds(r.ok && r.rows ? r.rows : []);
+  }
 
   // Prune the bulk-select Set to only ads still visible in the rendered list
   // (crv). The list changes on Load more, the "Independent only" toggle, and
@@ -570,6 +675,7 @@ export default function SourceClient({
             { id: "scaled", label: `Proven${scaledF.length ? ` · ${scaledF.length}` : ""}` },
             { id: "advertisers", label: `Brands${adv.length ? ` · ${adv.length}` : ""}` },
             { id: "creatives", label: `All ads${crv.length ? ` · ${crv.length}` : ""}` },
+            { id: "searches", label: `Searches${searches.length ? ` · ${searches.length}` : ""}` },
             { id: "identity", label: `Personas${identity.length ? ` · ${identity.length}` : ""}` },
           ]}
         />
@@ -584,6 +690,9 @@ export default function SourceClient({
         )}
         {tab === "creatives" && (
           <><b className="text-[var(--color-ink)]">All ads</b> — every individual ad you’ve pulled, highest winner score first.</>
+        )}
+        {tab === "searches" && (
+          <><b className="text-[var(--color-ink)]">Searches</b> — each search you’ve run, newest first. Tap one to see only the ads it pulled in — isolated from the rest of your library.</>
         )}
         {tab === "identity" && (
           <><b className="text-[var(--color-ink)]">Personas</b> — “Dr. ABC”-style advertisers resolved up to the real brand behind them.</>
@@ -745,64 +854,17 @@ export default function SourceClient({
                         : ""
                     } Tick a box to select, then recreate.`}
               </p>
-              {crv.map((c) => {
-              const on = detail?.id === c.id;
-              const hook = adHook(c.ad_body, c.ad_title, c.page_headline);
-              const dom = toDomain(c.destination_url);
-              const meta = metaAdUrl(c.meta_ad_id);
-              return (
-                <Card
+              {crv.map((c) => (
+                <AdRowCard
                   key={c.id}
-                  className="flex items-center gap-3 p-3"
-                  accent={selected.has(c.id) ? ACCENT : on ? ACCENT : undefined}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(c.id)}
-                    onChange={() => toggleSelect(c.id)}
-                    className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--color-source)]"
-                    title="Select to recreate"
-                  />
-                  <AdThumb
-                    src={(c.creative_media_type === "image" ? c.creative_media_url : null) || c.page_screenshot_url}
-                    name={c.page_name}
-                    size={56}
-                  />
-                  <button onClick={() => setDetail(c)} className="min-w-0 flex-1 text-left">
-                    <p className="truncate text-[14px] font-bold">{c.page_name || "Advertiser"}</p>
-                    <p className="truncate text-[12px] text-[var(--color-ink-muted)]">
-                      {dom || "destination not public"} · {c.days_running}d
-                    </p>
-                    {hook ? (
-                      <p className="mt-0.5 line-clamp-1 text-[12px]">{hook}</p>
-                    ) : (
-                      <p className="mt-0.5 truncate text-[12px] italic text-[var(--color-ink-muted)]">
-                        copy not public — open on Meta
-                      </p>
-                    )}
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <WinnerBadge badge={c.badge} />
-                      <span className="text-[11.5px] font-semibold text-[var(--color-ink-muted)]">
-                        Score {Math.round(c.winner_score)}
-                      </span>
-                    </div>
-                  </button>
-                  {meta && (
-                    <a
-                      href={meta}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex shrink-0 flex-col items-center gap-0.5"
-                      title="Open the real ad on Meta"
-                      style={{ color: ACCENT }}
-                    >
-                      <ExternalLink size={18} />
-                      <span className="text-[9px] font-bold">Meta</span>
-                    </a>
-                  )}
-                </Card>
-              );
-            })}
+                  c={c}
+                  active={detail?.id === c.id}
+                  selectable
+                  selected={selected.has(c.id)}
+                  onToggle={() => toggleSelect(c.id)}
+                  onOpen={() => setDetail(c)}
+                />
+              ))}
             {moreAvailable ? (
               <button
                 onClick={loadMoreCreatives}
@@ -854,6 +916,94 @@ export default function SourceClient({
           )}
         </div>
       )}
+
+      {/* ── Searches (one batch at a time, by search_id) ─────────────────── */}
+      {tab === "searches" &&
+        (activeSearch ? (
+          <div className="flex flex-col gap-3">
+            {/* Batch header */}
+            <div className="flex items-center justify-between gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-[14px] font-bold">{activeSearch.keyword}</p>
+                <p className="text-[11.5px] text-[var(--color-ink-muted)]">
+                  {fmtSearchDate(activeSearch.created_at)} · pulled {compact(activeSearch.ad_count)} ads
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setActiveSearch(null);
+                  setBatchAds([]);
+                }}
+                className="shrink-0 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-bold"
+              >
+                ← All searches
+              </button>
+            </div>
+
+            {batchLoading ? (
+              <div className="flex items-center justify-center gap-2 py-10 text-[13px] text-[var(--color-ink-muted)]">
+                <Loader2 size={16} className="animate-spin" /> Loading this batch…
+              </div>
+            ) : batchF.length === 0 ? (
+              <EmptyState
+                icon={Search}
+                title="Nothing to show from this search"
+                hint={
+                  independentOnly
+                    ? "Its ads may be hidden by “Independent only,” or none are still saved. Toggle it off above."
+                    : "This search’s ads are no longer in your library."
+                }
+              />
+            ) : (
+              <>
+                <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
+                  Showing {batchF.length.toLocaleString()} ad{batchF.length === 1 ? "" : "s"} from “{activeSearch.keyword}”, highest winner score first.
+                  {independentOnly && batchAds.length - batchF.length > 0
+                    ? ` ${(batchAds.length - batchF.length).toLocaleString()} hidden by “Independent only”.`
+                    : ""}
+                </p>
+                {batchF.map((c) => (
+                  <AdRowCard key={c.id} c={c} active={detail?.id === c.id} onOpen={() => setDetail(c)} />
+                ))}
+              </>
+            )}
+          </div>
+        ) : searches.length === 0 ? (
+          <EmptyState
+            icon={Search}
+            title="No searches yet"
+            hint="Use “Pull new from Meta” above — every search you run is saved here as its own batch."
+          />
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {searches.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => openSearch(s)}
+                className="flex items-center justify-between gap-3 rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-3 text-left shadow-[0_1px_2px_rgba(16,21,27,0.03)] transition-all duration-150 hover:-translate-y-0.5"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+                    <Search size={17} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-bold">{s.keyword}</p>
+                    <p className="text-[11.5px] text-[var(--color-ink-muted)]">{fmtSearchDate(s.created_at)}</p>
+                  </div>
+                </div>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span
+                    className="rounded-lg bg-[var(--color-accent-soft)] px-2.5 py-1 text-[12px] font-bold tabular-nums"
+                    style={{ color: ACCENT }}
+                  >
+                    {compact(s.ad_count)} ads
+                  </span>
+                  <ArrowRight size={16} className="text-[var(--color-ink-muted)]" />
+                </span>
+              </button>
+            ))}
+          </div>
+        ))}
 
       {/* ── Identity ────────────────────────────────────────────────────── */}
       {tab === "identity" &&
