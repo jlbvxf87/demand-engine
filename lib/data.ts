@@ -199,20 +199,25 @@ export async function getAdsBySearch(searchId: string, limit = 500): Promise<AdR
  * destination, or title. Powers the in-app "find a saved ad" box.
  */
 export async function searchLibrary(query: string, limit = 100): Promise<AdRow[]> {
-  // Strip LIKE wildcards (% _) and PostgREST structural chars (, ( ) * \) so the
-  // value is treated as a plain literal substring. Leaving any of these in lets
-  // `_`/`*` act as wildcards, and `, ( ) \` can break the `.or()` parse (which
-  // the catch would swallow → [] → a false "no matches" for a valid saved ad).
-  const q = (query || "").replace(/[%_,()*\\]/g, " ").replace(/\s+/g, " ").trim();
-  if (!q) return [];
+  // Keep only letters/digits; every other char (spaces, hyphens, regex/PostgREST
+  // specials) becomes a separator. Then require the query words ADJACENT in the
+  // ad — separated only by spaces/hyphens — so "skin care" matches "skincare" /
+  // "Skin Care" / "skin-care", but NOT a reading-app ad that merely contains
+  // "skin" and "care" scattered in its copy. (The old contiguous match found 0
+  // for "skin care"; a scattered-token match found 100 with that noise.)
+  const cleaned = (query || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!cleaned) return [];
+  const tokens = cleaned.split(" ").filter((t) => t.length >= 2).slice(0, 6);
+  if (tokens.length === 0) tokens.push(cleaned.replace(/\s+/g, ""));
+  // Words adjacent, separated only by spaces/hyphens. imatch = case-insensitive regex (~*).
+  const pat = tokens.join("[ -]*");
   try {
     const sb = getServiceClient();
-    const like = `%${q}%`;
     const { data, error } = await sb
       .from("spy_ads")
       .select(AD_COLS)
       .or(
-        `page_name.ilike.${like},ad_body.ilike.${like},destination_url.ilike.${like},ad_title.ilike.${like}`,
+        `page_name.imatch.${pat},ad_body.imatch.${pat},destination_url.imatch.${pat},ad_title.imatch.${pat}`,
       )
       .order("winner_score", { ascending: false })
       .limit(limit);
