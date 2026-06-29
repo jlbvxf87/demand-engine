@@ -8,6 +8,7 @@ import {
   Card,
   Badge,
   WinnerBadge,
+  Tabs,
   EmptyState,
   Modal,
   Stat,
@@ -281,12 +282,11 @@ export default function SourceClient({
   searches: SearchBatch[];
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState("creatives"); // default = the flat ad list
+  const [tab, setTab] = useState("searches"); // default = your searches, today first
   const [sort, setSort] = useState<"recent" | "top">("recent");
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false); // Meta-search options (country/status/…)
   const [linkOpen, setLinkOpen] = useState(false);
-  const [searchFilter, setSearchFilter] = useState(""); // filter the Searches view
-  const [searchFocused, setSearchFocused] = useState(false); // unified box: show recent searches
+  const [searchFilter, setSearchFilter] = useState(""); // find a past search (Searches view)
   const [vertical, setVertical] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [country, setCountry] = useState("US");
@@ -458,22 +458,15 @@ export default function SourceClient({
     arr.sort((a, b) => (sort === "recent" ? a.days_running - b.days_running : b.winner_score - a.winner_score));
     return arr;
   }, [crv, sort]);
-  const activeFilterCount = [
+  // Meta-search options that differ from the defaults (shown as a count on the
+  // "Search options" button). These configure the live Meta pull, not the ads list.
+  const optionCount = [
     country !== "US",
     status !== "ACTIVE",
     media !== "ALL",
     windowDays !== 0,
     platform !== "",
-    vertical !== "all",
   ].filter(Boolean).length;
-
-  // Unified search box: past searches matching what you're typing (or the most
-  // recent ones when the box is empty) — instant, from already-loaded data.
-  const matchedSearches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const list = q ? searches.filter((s) => s.keyword.toLowerCase().includes(q)) : searches;
-    return list.slice(0, 6);
-  }, [searches, query]);
 
   // Searches view: filter by keyword, then bucket newest-first by day.
   const searchGroups = useMemo(() => {
@@ -554,6 +547,8 @@ export default function SourceClient({
             : `Found ${m.total_fetched} ads — all already in your app, no duplicates added.`,
         );
       }
+      setTab("creatives"); // land on the freshly pulled ads (recent first)
+      clearLibSearch();
       router.refresh();
     });
   }
@@ -612,128 +607,53 @@ export default function SourceClient({
         badgeTone="source"
       />
 
-      {/* One clean box: finds ads AND surfaces your past searches as you type */}
+      {/* Search NEW ads from the live Meta Ad Library */}
       <div className="mb-2 flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-3">
         <Search size={18} className="text-[var(--color-ink-muted)]" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && findInLibrary(query)}
-          onFocus={() => setSearchFocused(true)}
-          onBlur={() => setSearchFocused(false)}
-          placeholder="Search ads or your past searches — brand, copy, domain, hook…"
+          onKeyDown={(e) => e.key === "Enter" && runSearch()}
+          placeholder="Search new ads from Meta — topic, brand, or offer…"
           className="w-full bg-transparent text-[15px] outline-none placeholder:text-[var(--color-ink-muted)]"
         />
-        {libResults !== null && (
-          <button onClick={clearLibSearch} className="shrink-0 text-[12px] font-semibold text-[var(--color-ink-muted)]">
-            Clear
-          </button>
-        )}
         <button
-          onClick={() => findInLibrary(query)}
-          disabled={libSearching || !query.trim()}
-          className="flex items-center gap-1 rounded-xl px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-40"
+          onClick={runSearch}
+          disabled={pending || !query.trim()}
+          title={query.trim() ? `Pull "${query.trim()}" fresh from the Meta Ad Library` : "Type a topic, brand, or offer"}
+          className="flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-[13px] font-bold text-white disabled:opacity-40"
           style={{ background: ACCENT }}
         >
-          {libSearching ? <Loader2 size={14} className="animate-spin" /> : "Search"}
+          {pending ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+          Search Meta
         </button>
       </div>
 
-      {/* Live: your past searches matching what you're typing — tap to reopen */}
-      {(searchFocused || query.trim()) && matchedSearches.length > 0 && (
-        <div className="mb-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-1.5 shadow-[0_8px_24px_-12px_rgba(16,21,27,0.18)]">
-          <p className="px-2 py-1 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
-            {query.trim() ? `Your searches matching "${query.trim()}"` : "Jump back to a recent search"}
-          </p>
-          {matchedSearches.map((s) => (
-            <button
-              key={s.id}
-              // onMouseDown so it fires before the input's onBlur hides this panel.
-              onMouseDown={() => {
-                setTab("searches");
-                openSearch(s);
-              }}
-              className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left hover:bg-[var(--color-surface-2)]"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <CornerDownRight size={14} className="shrink-0 text-[var(--color-ink-muted)]" />
-                <span className="truncate text-[13.5px] font-semibold">{s.keyword}</span>
-              </span>
-              <span className="shrink-0 text-[11px] font-semibold text-[var(--color-ink-muted)]">
-                {dateBucket(s.created_at)} · {compact(s.ad_count)} ads
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-      {/* Toolbar — sort · filters · view · pull-from-Meta · link */}
+      {/* Meta-search options + source-from-a-link */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <FilterSelect
-          label="Sort"
-          value={sort}
-          onChange={(v) => setSort(v as "recent" | "top")}
-          options={[
-            { value: "recent", label: "Most recent" },
-            { value: "top", label: "Top winners" },
-          ]}
-        />
         <button
-          onClick={() => setFiltersOpen((v) => !v)}
+          onClick={() => setOptionsOpen((v) => !v)}
           className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
           style={
-            filtersOpen || activeFilterCount > 0
+            optionsOpen || optionCount > 0
               ? { borderColor: ACCENT, color: ACCENT }
               : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
           }
         >
-          <SlidersHorizontal size={13} /> Filters{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ""}
+          <SlidersHorizontal size={13} /> Search options{optionCount > 0 ? ` · ${optionCount}` : ""}
         </button>
-        <FilterSelect
-          label="View"
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "creatives", label: "Ads" },
-            { value: "advertisers", label: "Brands" },
-            { value: "searches", label: "Searches" },
-          ]}
-        />
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={runSearch}
-            disabled={pending || !query.trim()}
-            title={query.trim() ? `Pull "${query.trim()}" fresh from the Meta Ad Library` : "Type a search term first"}
-            className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12.5px] font-bold text-white disabled:opacity-40"
-            style={{ background: ACCENT }}
-          >
-            {pending ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-            Pull from Meta
-          </button>
-          <button
-            onClick={() => setLinkOpen((v) => !v)}
-            title="Source one ad from a Meta link"
-            className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-[var(--color-line)] px-2.5 py-1.5 text-[12.5px] font-bold text-[var(--color-ink-muted)]"
-          >
-            <ExternalLink size={13} /> Link
-          </button>
-        </div>
+        <button
+          onClick={() => setLinkOpen((v) => !v)}
+          title="Source one ad straight from a Meta ad-library link"
+          className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-bold text-[var(--color-ink-muted)]"
+        >
+          <ExternalLink size={13} /> From a link
+        </button>
       </div>
 
-      {/* Filters (collapsible) */}
-      {filtersOpen && (
+      {/* Search options (collapsible) — these configure the Meta pull */}
+      {optionsOpen && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
-          <button
-            onClick={() => setIndependentOnly((v) => !v)}
-            title="Hide market leaders and advocacy/issue ads — show only independent operators"
-            className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
-            style={
-              independentOnly
-                ? { background: ACCENT, color: "white", borderColor: ACCENT }
-                : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
-            }
-          >
-            {independentOnly ? "✓ Independent only" : "Independent only"}
-          </button>
           <FilterSelect label="Country" value={country} onChange={setCountry} options={COUNTRIES} />
           <FilterSelect
             label="Status"
@@ -776,17 +696,8 @@ export default function SourceClient({
               { value: "instagram", label: "Instagram" },
             ]}
           />
-          <FilterSelect
-            label="Vertical"
-            value={vertical}
-            onChange={setVertical}
-            options={[
-              { value: "all", label: "All" },
-              ...verticals.map((v) => ({ value: v, label: verticalLabel(v) })),
-            ]}
-          />
           <span className="w-full px-1 text-[11px] text-[var(--color-ink-muted)]">
-            Country / Status / Media / Window apply when you Pull from Meta.
+            These refine your <b className="text-[var(--color-ink)]">Meta search</b> (the live pull). Filtering your existing ads is on the Ads view.
           </span>
         </div>
       )}
@@ -817,6 +728,20 @@ export default function SourceClient({
           {note}
         </p>
       )}
+
+      {/* Your searches (default) · Ads · Brands */}
+      <div className="mb-4">
+        <Tabs
+          accent={ACCENT}
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { id: "searches", label: `Searches${searches.length ? ` · ${searches.length}` : ""}` },
+            { id: "creatives", label: `Ads${crv.length ? ` · ${crv.length}` : ""}` },
+            { id: "advertisers", label: `Brands${adv.length ? ` · ${adv.length}` : ""}` },
+          ]}
+        />
+      </div>
 
       {/* ── Scaled winners (duplication = proven) ───────────────────────── */}
       {tab === "scaled" &&
@@ -952,6 +877,41 @@ export default function SourceClient({
       {/* ── Creatives (your saved library) ──────────────────────────────── */}
       {tab === "creatives" && (
         <div className="flex flex-col gap-3">
+          {/* Filter / sort the ads you've ALREADY pulled (not the Meta search) */}
+          {crv.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterSelect
+                label="Sort"
+                value={sort}
+                onChange={(v) => setSort(v as "recent" | "top")}
+                options={[
+                  { value: "recent", label: "Most recent" },
+                  { value: "top", label: "Top winners" },
+                ]}
+              />
+              <FilterSelect
+                label="Vertical"
+                value={vertical}
+                onChange={setVertical}
+                options={[
+                  { value: "all", label: "All" },
+                  ...verticals.map((v) => ({ value: v, label: verticalLabel(v) })),
+                ]}
+              />
+              <button
+                onClick={() => setIndependentOnly((v) => !v)}
+                title="Hide market leaders and advocacy/issue ads — show only independent operators"
+                className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
+                style={
+                  independentOnly
+                    ? { background: ACCENT, color: "white", borderColor: ACCENT }
+                    : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
+                }
+              >
+                {independentOnly ? "✓ Independent only" : "Independent only"}
+              </button>
+            </div>
+          )}
           {crv.length === 0 ? (
             libResults !== null ? (
               // Seamless: no saved match → one tap pulls this term live from Meta.
