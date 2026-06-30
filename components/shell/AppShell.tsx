@@ -84,7 +84,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <main
           key={pathname}
-          className="de-in mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-5 md:max-w-3xl md:px-8 md:pb-12 md:pt-8"
+          className="de-in mx-auto w-full max-w-2xl flex-1 px-4 pb-[calc(7rem_+_env(safe-area-inset-bottom))] pt-5 md:max-w-3xl md:px-8 md:pb-12 md:pt-8"
         >
           {children}
         </main>
