@@ -640,7 +640,7 @@ export async function pollVideoJobs(): Promise<ActionResult> {
     // Re-render any failed storyboard scenes (self-heal) and stitch once ready.
     await reconcileStoryboards(sb, await baseUrl());
     // Poll AI-motion clips and composite Motion drafts once their clips land.
-    await reconcileMotionDrafts(sb);
+    await reconcileMotionDrafts(sb, await baseUrl());
 
     if (updated) {
       revalidatePath("/publish");

@@ -2,7 +2,7 @@ import "server-only";
 import { getServiceClient } from "@/lib/supabase/server";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { persistVideoToStorage, uploadLocalVideo } from "@/lib/persist";
-import { renderDraftVideo } from "@/lib/draft-render";
+import { renderDraftVideo, draftWorkerConfigured, dispatchToWorker } from "@/lib/draft-render";
 import { PROVIDER_DURATIONS, type VideoProvider } from "@/lib/video";
 import { methodCost, type DraftRenderPlan, type DraftScene } from "../remotion/types";
 
@@ -37,7 +37,7 @@ function scenePrompt(s: DraftScene): string {
  * Idempotent: only the composite step is compare-and-swap claimed, so it's safe
  * to call every poll tick (mirrors reconcileStoryboards).
  */
-export async function reconcileMotionDrafts(sb: SB): Promise<void> {
+export async function reconcileMotionDrafts(sb: SB, origin: string): Promise<void> {
   const { data } = await sb
     .from("ad_creatives")
     .select("id, render_plan_json")
@@ -123,6 +123,18 @@ export async function reconcileMotionDrafts(sb: SB): Promise<void> {
       .select("id");
     if (!claimed || claimed.length === 0) continue;
 
+    // Prod: offload the composite render to the worker (its callback flips ready).
+    if (draftWorkerConfigured()) {
+      try {
+        await dispatchToWorker(plan, d.id, origin);
+      } catch {
+        // worker unreachable — revert so a later tick retries.
+        await sb.from("ad_creatives").update({ video_status: "rendering" }).eq("id", d.id);
+      }
+      continue;
+    }
+
+    // Local: composite inline.
     try {
       const rendered = await renderDraftVideo(plan, d.id);
       if (!rendered.ok || !rendered.localPath) throw new Error(rendered.error || "Composite failed");

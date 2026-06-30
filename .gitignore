@@ -35,3 +35,6 @@ next-env.d.ts
 
 # supabase CLI cache
 supabase/.temp/
+
+# draft render worker deps
+draft-render-worker/node_modules/

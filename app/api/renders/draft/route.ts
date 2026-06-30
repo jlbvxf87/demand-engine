@@ -3,7 +3,7 @@ import { isAdminAuthed } from "@/lib/admin-auth";
 import { isMachineAuthed } from "@/lib/machine-auth";
 import { getServiceClient } from "@/lib/supabase/server";
 import { buildDraftPlan, type DraftRenderPlan } from "@/lib/draft-plan";
-import { renderDraftVideo } from "@/lib/draft-render";
+import { renderDraftVideo, draftWorkerConfigured, dispatchToWorker } from "@/lib/draft-render";
 import { uploadLocalVideo } from "@/lib/persist";
 import { submitKieVideo, isVideoProvider } from "@/lib/kie";
 import { PROVIDER_DURATIONS, type VideoProvider } from "@/lib/video";
@@ -107,6 +107,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "creativeId, brief, or plan required" }, { status: 400 });
     }
 
+    // Prod: offload the render to the worker (Vercel can't run Remotion). The
+    // worker renders + uploads + POSTs /api/renders/draft-callback to flip it ready.
+    if (draftWorkerConfigured()) {
+      const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "localhost:3000";
+      const proto = req.headers.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
+      try {
+        await dispatchToWorker(plan, creativeId, `${proto}://${host}`);
+        return NextResponse.json({ ok: true, id: creativeId, status: "rendering", dispatched: true });
+      } catch (e) {
+        await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", creativeId);
+        return NextResponse.json({ error: e instanceof Error ? e.message : "Dispatch failed" }, { status: 502 });
+      }
+    }
+
+    // Local: render inline.
     const rendered = await renderDraftVideo(plan, creativeId);
     if (!rendered.ok || !rendered.localPath) {
       await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", creativeId);
