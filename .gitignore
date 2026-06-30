@@ -32,3 +32,9 @@ next-env.d.ts
 
 # vercel
 .vercel
+
+# supabase CLI cache
+supabase/.temp/
+
+# draft render worker deps
+draft-render-worker/node_modules/
