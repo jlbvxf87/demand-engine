@@ -5,6 +5,7 @@ import { getServiceClient } from "@/lib/supabase/server";
 import { pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { persistVideoToStorage } from "@/lib/persist";
 import { reconcileStoryboards } from "@/lib/storyboard-reconcile";
+import { reconcileMotionDrafts } from "@/lib/motion-reconcile";
 
 /** Public origin for the stitch callback, from the proxied request headers. */
 function originOf(req: Request): string {
@@ -110,10 +111,14 @@ async function run(req: Request) {
 
   const rows = (data ?? []) as SweepRow[];
   if (rows.length === 0) {
-    // No in-progress clips, but storyboards may still need a failed scene
-    // re-rendered (self-heal) or a final stitch.
+    // No in-progress single clips here, but storyboards and Motion drafts track
+    // their KIE jobs elsewhere (storyboard scenes / render_plan_json, t2v_job_id
+    // NULL) so they never appear in `rows` — reconcile them regardless.
     try {
       await reconcileStoryboards(sb, originOf(req));
+    } catch {}
+    try {
+      await reconcileMotionDrafts(sb, originOf(req));
     } catch {}
     return NextResponse.json({ checked: 0, updated: 0, failedStale: 0, crawlReset });
   }
@@ -173,10 +178,14 @@ async function run(req: Request) {
   const updated = outcomes.filter((o) => o !== "noop").length;
   const failedStale = outcomes.filter((o) => o === "failed-stale").length;
 
-  // Self-heal failed storyboard scenes + stitch when ready — works even when the
-  // Studio tab is closed and the client poll loop isn't running.
+  // Self-heal failed storyboard scenes + stitch when ready, and poll/composite
+  // Motion drafts — both work even when the Studio tab is closed and the client
+  // poll loop (pollVideoJobs) isn't running to drive them.
   try {
     await reconcileStoryboards(sb, originOf(req));
+  } catch {}
+  try {
+    await reconcileMotionDrafts(sb, originOf(req));
   } catch {}
 
   return NextResponse.json({ checked: rows.length, updated, failedStale, crawlReset });
