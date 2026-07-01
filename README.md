@@ -91,3 +91,5 @@ Live *actions* need `MACHINE_API_KEY` + the relevant provider key.
 
 Production builds run on Vercel (same stack as v1). Local typecheck:
 `npx tsc --noEmit` (clean).
+
+<!-- render worker: auto-deploys from main on changes under draft-render-worker/ or remotion/ (Railway watch paths) -->
