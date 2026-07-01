@@ -41,7 +41,7 @@ export async function reconcileMotionDrafts(sb: SB, origin: string): Promise<voi
   const { data } = await sb
     .from("ad_creatives")
     .select("id, render_plan_json")
-    .eq("render_mode", "motion")
+    .in("render_mode", ["motion", "cinematic"])
     .eq("video_status", "rendering");
 
   const drafts = (data || []) as { id: string; render_plan_json: DraftRenderPlan | null }[];

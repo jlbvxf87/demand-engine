@@ -1,6 +1,6 @@
 import http from "node:http";
-import { renderPlan } from "./render.mjs";
-import { uploadMp4 } from "./upload.mjs";
+import { renderPlan, renderSeedFrames } from "./render.mjs";
+import { uploadMp4, uploadSeedFrame } from "./upload.mjs";
 
 const PORT = process.env.PORT || 8080;
 const SECRET = process.env.DRAFT_WORKER_SECRET || "";
@@ -30,13 +30,33 @@ async function postCallback(url, payload) {
 }
 
 // Render → upload → call back. Runs in the background after we 202 the request.
-async function processJob({ plan, creativeId, callbackUrl }) {
+// When captureSeeds is set (plain Draft renders), also capture a clean per-scene
+// still and return it as seedFrames so a later Cinematic upgrade can seed image-to-video.
+async function processJob({ plan, creativeId, callbackUrl, captureSeeds }) {
   const t0 = Date.now();
   try {
     const local = await renderPlan(plan, creativeId);
     const video_url = await uploadMp4(local, creativeId);
+
+    let seedFrames;
+    if (captureSeeds) {
+      try {
+        const files = await renderSeedFrames(plan, creativeId);
+        seedFrames = {};
+        for (const [idx, file] of Object.entries(files)) {
+          try {
+            seedFrames[idx] = await uploadSeedFrame(file, creativeId, idx);
+          } catch (e) {
+            console.error(`seed upload failed ${creativeId} s${idx}:`, e?.message);
+          }
+        }
+      } catch (e) {
+        console.error(`seed capture failed ${creativeId}:`, e?.message); // non-fatal
+      }
+    }
+
     console.log(`rendered ${creativeId} in ${((Date.now() - t0) / 1000).toFixed(1)}s -> ${video_url}`);
-    if (callbackUrl) await postCallback(callbackUrl, { creativeId, video_url });
+    if (callbackUrl) await postCallback(callbackUrl, { creativeId, video_url, seedFrames });
   } catch (e) {
     console.error(`render failed ${creativeId}:`, e?.message);
     if (callbackUrl) await postCallback(callbackUrl, { creativeId, error: e?.message || "render failed" });

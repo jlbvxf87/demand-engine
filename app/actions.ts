@@ -912,3 +912,134 @@ export async function renderDraftFromPlan(plan: DraftRenderPlan): Promise<Action
   if (r.ok) revalidatePath("/publish");
   return r;
 }
+
+// Default cinematic model + per-scene cost estimate (cents) shown before spending.
+const CINEMATIC_PROVIDER = "kling";
+const CINEMATIC_SCENE_CENTS = 100;
+
+/**
+ * Step 1 of the Cinematic upgrade (READ-ONLY, spends nothing): take a finished
+ * draft's saved scene recipe and propose the cinematic version — every scene
+ * flipped to AI, image-to-video seeded from that scene's tested look
+ * (source image, else the captionless seed still captured at draft time). The
+ * UI shows this in the editable Scene Recipe so the user can tweak + see cost,
+ * then confirms via upgradeToCinematic.
+ */
+export async function buildCinematicRecipe(creativeId: string): Promise<ActionResult> {
+  if (!creativeId) return { ok: false, error: "creativeId required" };
+  try {
+    const sb = getServiceClient();
+    const { data } = await sb
+      .from("ad_creatives")
+      .select("render_plan_json, render_mode")
+      .eq("id", creativeId)
+      .single();
+    const row = data as { render_plan_json?: DraftRenderPlan | null; render_mode?: string | null } | null;
+    const plan = row?.render_plan_json;
+    if (!plan || !Array.isArray(plan.scenes) || plan.scenes.length === 0) {
+      return { ok: false, error: "This creative has no editable recipe to upgrade." };
+    }
+    const scenes = plan.scenes.map((s) => {
+      // Fold the tested look into `image` so the existing i2v submit path seeds from it.
+      // Prefer the captionless frame captured from the draft (exact tested crop —
+      // "frame-for-frame"); fall back to the raw source image for older drafts.
+      const seed = s.seedFrameUrl ?? s.image;
+      return {
+        ...s,
+        renderMethod: "ai_motion" as const,
+        image: seed,
+        aiProvider: CINEMATIC_PROVIDER,
+        estimatedCostCents: CINEMATIC_SCENE_CENTS,
+      };
+    });
+    const cinematic: DraftRenderPlan = {
+      ...plan,
+      scenes,
+      estimatedCostCents: scenes.reduce((sum, s) => sum + (s.estimatedCostCents ?? CINEMATIC_SCENE_CENTS), 0),
+      sourceCreativeId: creativeId,
+    };
+    return { ok: true, data: { plan: cinematic, provider: CINEMATIC_PROVIDER } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Failed to build cinematic recipe" };
+  }
+}
+
+/**
+ * Step 2 of the Cinematic upgrade: render the user's reviewed/edited cinematic
+ * recipe. Creates a NEW render_mode='cinematic' creative (the cheap draft is
+ * preserved); each AI scene renders via KIE and composites into one video via
+ * the existing Motion pipeline. Spends AI credits — only called on explicit confirm.
+ */
+export async function upgradeToCinematic(
+  creativeId: string,
+  plan: DraftRenderPlan,
+  provider?: string,
+): Promise<ActionResult> {
+  if (!creativeId) return { ok: false, error: "creativeId required" };
+  if (!plan || !Array.isArray(plan.scenes) || plan.scenes.length === 0) {
+    return { ok: false, error: "Empty recipe" };
+  }
+  const prov = provider && isVideoProvider(provider) ? provider : CINEMATIC_PROVIDER;
+  const finalPlan: DraftRenderPlan = { ...plan, sourceCreativeId: creativeId };
+  const r = await callRoute("/api/renders/draft", {
+    plan: finalPlan,
+    mode: "cinematic",
+    provider: prov,
+    sourceCreativeId: creativeId,
+  });
+  if (r.ok) revalidatePath("/publish");
+  return r;
+}
+
+/**
+ * Story from existing clips (Stories ▸ Assemble): stitch already-rendered clips
+ * (draft or cinematic `video_url`s, in the given order) into one Story via the
+ * existing crossfade stitch worker. Creates a `storyboards` row the worker's
+ * callback flips to ready; the source clips are never modified. User-initiated only.
+ */
+export async function stitchClips(input: { clipUrls: string[]; title?: string }): Promise<ActionResult> {
+  const clipUrls = (input.clipUrls || []).filter(Boolean);
+  if (clipUrls.length < 2) return { ok: false, error: "Pick at least 2 clips to stitch" };
+
+  const worker = process.env.STITCH_WORKER_URL;
+  if (!worker) return { ok: false, error: "Stitch worker not configured" };
+
+  try {
+    const sb = getServiceClient();
+    const { data: row, error } = await sb
+      .from("storyboards")
+      .insert({
+        prompt: (input.title || "Assembled clips").slice(0, 200),
+        provider: "remotion",
+        clip_count: clipUrls.length,
+        duration_per_clip: 0,
+        status: "stitching",
+        final_status: "stitching",
+        master_script_json: { assembled: true },
+      })
+      .select("id")
+      .single();
+    if (error || !row) return { ok: false, error: error?.message || "Failed to create story" };
+    const storyboardId = (row as { id: string }).id;
+
+    // The worker appends its own ?key=<STITCH_WEBHOOK_SECRET> to the callback URL.
+    const res = await fetch(`${worker.replace(/\/$/, "")}/stitch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        storyboard_id: storyboardId,
+        clip_urls: clipUrls,
+        callback_url: `${await baseUrl()}/api/storyboards/stitch-callback`,
+      }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      await sb.from("storyboards").update({ status: "failed", final_status: "failed" }).eq("id", storyboardId);
+      return { ok: false, error: `Stitch worker HTTP ${res.status}` };
+    }
+    revalidatePath("/publish");
+    return { ok: true, data: { storyboard_id: storyboardId } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Stitch failed" };
+  }
+}

@@ -28,11 +28,14 @@ export default function SceneRecipe({
   plan,
   onChange,
   aiEnabled = false,
+  hideTotal = false,
 }: {
   plan: DraftRenderPlan;
   onChange: (p: DraftRenderPlan) => void;
   /** Motion tier unlocks the ai_motion method. */
   aiEnabled?: boolean;
+  /** Hide the built-in per-recipe total (Cinematic modal shows its own estimate). */
+  hideTotal?: boolean;
 }) {
   // Rebuild the plan from an edited scene list, re-stamping per-scene cost,
   // total cost, and total frames.
@@ -80,9 +83,11 @@ export default function SceneRecipe({
     <Card className="mb-4 p-4" accent={ACCENT}>
       <div className="mb-3 flex items-center justify-between">
         <p className="text-[15px] font-bold">Scene recipe</p>
-        <span className="rounded-full bg-[var(--color-publish-soft)] px-2.5 py-1 text-[12px] font-extrabold tabular-nums text-[var(--color-publish)]">
-          Total ~{fmtCents(plan.estimatedCostCents)}
-        </span>
+        {!hideTotal && (
+          <span className="rounded-full bg-[var(--color-publish-soft)] px-2.5 py-1 text-[12px] font-extrabold tabular-nums text-[var(--color-publish)]">
+            Total ~{fmtCents(plan.estimatedCostCents)}
+          </span>
+        )}
       </div>
 
       <div className="flex flex-col gap-2.5">

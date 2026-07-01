@@ -17,7 +17,16 @@ export const maxDuration = 300;
 // Default KIE model for AI-motion scenes — the cheapest talking-head option.
 const MOTION_PROVIDER: VideoProvider = "seedance";
 
-type Body = { creativeId?: string; brief?: string; image?: string; plan?: DraftRenderPlan };
+type Body = {
+  creativeId?: string;
+  brief?: string;
+  image?: string;
+  plan?: DraftRenderPlan;
+  // Cinematic upgrade: tag the row + pick the AI model for its scenes.
+  mode?: "motion" | "cinematic";
+  provider?: string;
+  sourceCreativeId?: string;
+};
 
 /** Make the two live template methods render differently: still_zoom → a zoom. */
 function normalizeMotion(plan: DraftRenderPlan): DraftRenderPlan {
@@ -62,10 +71,14 @@ export async function POST(req: Request) {
 
   const sb = getServiceClient();
 
-  // ── Motion path: a recipe with AI scenes renders asynchronously ──────────
+  // ── Motion / Cinematic path: a recipe with AI scenes renders asynchronously ──
   if (body.plan && Array.isArray(body.plan.scenes) && body.plan.scenes.length > 0 && hasAiMotion(body.plan)) {
     try {
-      return await startMotionDraft(sb, normalizeMotion(body.plan));
+      const mode = body.mode === "cinematic" ? "cinematic" : "motion";
+      const provider =
+        body.provider && isVideoProvider(body.provider) ? (body.provider as VideoProvider) : MOTION_PROVIDER;
+      const plan = { ...normalizeMotion(body.plan), sourceCreativeId: body.sourceCreativeId };
+      return await startMotionDraft(sb, plan, { mode, provider });
     } catch (e) {
       return NextResponse.json(
         { error: e instanceof Error ? e.message : "Failed to start motion draft" },
@@ -113,7 +126,8 @@ export async function POST(req: Request) {
       const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "localhost:3000";
       const proto = req.headers.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
       try {
-        await dispatchToWorker(plan, creativeId, `${proto}://${host}`);
+        // Capture per-scene seed stills so this draft can later be upgraded to Cinematic.
+        await dispatchToWorker(plan, creativeId, `${proto}://${host}`, { captureSeeds: true });
         return NextResponse.json({ ok: true, id: creativeId, status: "rendering", dispatched: true });
       } catch (e) {
         await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", creativeId);
@@ -154,15 +168,20 @@ export async function POST(req: Request) {
 }
 
 /**
- * Kick off a Motion draft: submit a KIE clip per ai_motion scene, store the jobs
- * in render_plan_json, and return immediately. reconcileMotionDrafts (driven by
- * the client poll loop) polls the clips and fires the composite render when ready.
+ * Kick off a Motion/Cinematic draft: submit a KIE clip per ai_motion scene, store
+ * the jobs in render_plan_json, and return immediately. reconcileMotionDrafts (driven
+ * by the poll loop / cron sweep) polls the clips and fires the composite when ready.
+ * `mode` tags the row (motion|cinematic); `provider` is the KIE model for its scenes.
  */
-async function startMotionDraft(sb: ReturnType<typeof getServiceClient>, plan: DraftRenderPlan) {
+async function startMotionDraft(
+  sb: ReturnType<typeof getServiceClient>,
+  plan: DraftRenderPlan,
+  opts: { mode: "motion" | "cinematic"; provider: VideoProvider },
+) {
+  const { mode, provider } = opts;
   const scenes = await Promise.all(
     plan.scenes.map(async (s) => {
       if (s.renderMethod !== "ai_motion") return s;
-      const provider = MOTION_PROVIDER;
       try {
         const { taskId } = await submitKieVideo({
           provider,
@@ -179,20 +198,21 @@ async function startMotionDraft(sb: ReturnType<typeof getServiceClient>, plan: D
     }),
   );
   const planWithJobs: DraftRenderPlan = { ...plan, scenes };
-  const hook = planWithJobs.scenes.find((s) => s.role === "hook")?.text || "Motion draft";
+  const label = mode === "cinematic" ? "Cinematic" : "Motion draft";
+  const hook = planWithJobs.scenes.find((s) => s.role === "hook")?.text || label;
   const image = planWithJobs.scenes.find((s) => s.image)?.image ?? null;
-  const id = await insertDraft(sb, hook, image, planWithJobs, "motion");
+  const id = await insertDraft(sb, hook, image, planWithJobs, mode);
   const submitted = scenes.filter((s) => s.renderMethod === "ai_motion" && s.aiStatus === "pending").length;
-  return NextResponse.json({ ok: true, id, status: "rendering", motion: true, aiScenes: submitted });
+  return NextResponse.json({ ok: true, id, status: "rendering", motion: true, mode, aiScenes: submitted });
 }
 
-/** Insert a fresh draft/motion creative (rendering) and return its id; throws on error. */
+/** Insert a fresh draft/motion/cinematic creative (rendering) and return its id; throws on error. */
 async function insertDraft(
   sb: ReturnType<typeof getServiceClient>,
   hook: string,
   image: string | null,
   plan: DraftRenderPlan,
-  mode: "draft" | "motion",
+  mode: "draft" | "motion" | "cinematic",
 ): Promise<string> {
   const { data: row, error } = await sb
     .from("ad_creatives")

@@ -19,3 +19,16 @@ export async function uploadMp4(localPath, id) {
   const { data } = sb.storage.from("ad-creatives").getPublicUrl(objectPath);
   return data.publicUrl;
 }
+
+/** Upload a captionless seed still (PNG) for a scene; returns its public URL. */
+export async function uploadSeedFrame(localPath, id, sceneIndex) {
+  const buffer = await readFile(localPath);
+  if (buffer.byteLength < 256) throw new Error("empty seed frame");
+  const objectPath = `generated/${id}-seed-s${sceneIndex}.png`;
+  const { error } = await sb.storage
+    .from("ad-creatives")
+    .upload(objectPath, buffer, { contentType: "image/png", upsert: true });
+  if (error) throw new Error(error.message);
+  const { data } = sb.storage.from("ad-creatives").getPublicUrl(objectPath);
+  return data.publicUrl;
+}

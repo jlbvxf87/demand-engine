@@ -23,6 +23,7 @@ export async function dispatchToWorker(
   plan: DraftRenderPlan,
   creativeId: string,
   origin: string,
+  opts?: { captureSeeds?: boolean },
 ): Promise<void> {
   const base = process.env.DRAFT_WORKER_URL;
   if (!base) throw new Error("DRAFT_WORKER_URL not set");
@@ -31,7 +32,7 @@ export async function dispatchToWorker(
   const res = await fetch(`${base.replace(/\/$/, "")}/render`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-worker-secret": secret },
-    body: JSON.stringify({ plan, creativeId, callbackUrl }),
+    body: JSON.stringify({ plan, creativeId, callbackUrl, captureSeeds: opts?.captureSeeds ?? false }),
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`render worker HTTP ${res.status}`);

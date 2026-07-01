@@ -11,17 +11,28 @@ import {
   Film,
   Trash2,
   Zap,
+  Sparkles,
 } from "lucide-react";
 import { ScreenHeader, Badge, EmptyState, Modal, Tabs } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
 import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
-import { renderVideo, pollVideoJobs, deleteCreative, generateDraftVideo } from "@/app/actions";
+import {
+  renderVideo,
+  pollVideoJobs,
+  deleteCreative,
+  generateDraftVideo,
+  buildCinematicRecipe,
+  upgradeToCinematic,
+  stitchClips,
+} from "@/app/actions";
 import CopyPanel from "./CopyPanel";
 import VideoPanel from "./VideoPanel";
 import StoryboardPanel from "./StoryboardPanel";
 import StoriesList from "./StoriesList";
 import PublishPanel from "./PublishPanel";
+import SceneRecipe from "./SceneRecipe";
+import type { DraftRenderPlan } from "@/remotion/types";
 import type { Creative, Storyboard } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
@@ -41,14 +52,16 @@ function isRendering(c: Creative) {
   );
 }
 
-/** Cinematic = a real AI-model (KIE) video. Tests = cheap Remotion drafts/motion,
- *  stills, and anything not yet promoted to a paid model render. */
+/** Cinematic = a real AI-model (KIE) video OR a recipe-based cinematic upgrade
+ *  (all scenes AI). Tests = cheap Remotion drafts/motion, stills, and anything
+ *  not yet promoted. */
 function isCinematic(c: Creative) {
-  return !!c.video_provider && c.video_provider !== "remotion";
+  return c.render_mode === "cinematic" || (!!c.video_provider && c.video_provider !== "remotion");
 }
 
 /** Short tier label for a tile badge. */
 function tierLabel(c: Creative): string {
+  if (c.render_mode === "cinematic") return "Cinematic";
   if (c.render_mode === "motion") return "Motion";
   if (c.render_mode === "draft" || c.video_provider === "remotion") return "Draft";
   if (c.video_provider) return providerLabel(c.video_provider);
@@ -99,6 +112,18 @@ export default function PublishClient({
   const [note, setNote] = useState<string | null>(null);
   const [outFilter, setOutFilter] = useState<"all" | "tests" | "cinematic">("all");
 
+  // Cinematic upgrade review (opens on a finished draft; spends nothing until confirm).
+  const [cineFor, setCineFor] = useState<Creative | null>(null);
+  const [cinePlan, setCinePlan] = useState<DraftRenderPlan | null>(null);
+  const [cineProvider, setCineProvider] = useState<VideoProvider>("kling");
+  const [cineBuilding, setCineBuilding] = useState(false);
+  const [cineRendering, startCine] = useTransition();
+
+  // Stories tab: generate fresh vs assemble existing clips.
+  const [storyMode, setStoryMode] = useState<"generate" | "assemble">("generate");
+  const [selectedClips, setSelectedClips] = useState<string[]>([]);
+  const [stitching, startStitch] = useTransition();
+
   const anyRendering = creatives.some(isRendering);
   const stills = creatives.filter((c) => !c.video_url && !isRendering(c));
   // Scene clips belong to a Story (shown in the Stories tab), so keep them out of
@@ -106,6 +131,8 @@ export default function PublishClient({
   const standalone = creatives.filter((c) => c.creative_type !== "scene");
   const cinematic = standalone.filter(isCinematic);
   const tests = standalone.filter((c) => !isCinematic(c));
+  // Finished clips (draft or cinematic) eligible to be stitched into a Story.
+  const finishedClips = standalone.filter((c) => c.video_url && !isRendering(c));
   const shown = outFilter === "tests" ? tests : outFilter === "cinematic" ? cinematic : standalone;
   const anyStoryboardActive = storyboards.some((s) =>
     ["scripting", "generating", "stitching"].includes(s.status)
@@ -183,6 +210,71 @@ export default function PublishClient({
     });
   }
 
+  // Open the Cinematic upgrade review for a finished draft. Builds the proposed
+  // recipe (all scenes AI, seeded from the tested look) — spends nothing yet.
+  function openUpgrade(c: Creative) {
+    setReview(null);
+    setCineFor(c);
+    setCinePlan(null);
+    setNote(null);
+    setCineBuilding(true);
+    startCine(async () => {
+      const r = await buildCinematicRecipe(c.id);
+      setCineBuilding(false);
+      if (!r.ok) {
+        setCineFor(null);
+        setNote(r.error || "Couldn't build cinematic recipe");
+        return;
+      }
+      const d = r.data as { plan: DraftRenderPlan; provider: string };
+      setCinePlan(d.plan);
+      if (d.provider && (VIDEO_PROVIDERS as { id: string }[]).some((p) => p.id === d.provider)) {
+        setCineProvider(d.provider as VideoProvider);
+      }
+    });
+  }
+
+  // Confirm + spend: render the reviewed cinematic recipe as a NEW creative.
+  function confirmCinematic() {
+    if (!cineFor || !cinePlan) return;
+    setNote(null);
+    startCine(async () => {
+      const r = await upgradeToCinematic(cineFor.id, cinePlan, cineProvider);
+      if (!r.ok) {
+        setNote(r.error || "Cinematic upgrade failed");
+        return;
+      }
+      setCineFor(null);
+      setCinePlan(null);
+      router.refresh();
+    });
+  }
+
+  function toggleClip(id: string) {
+    setSelectedClips((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function doStitch() {
+    const urls = selectedClips
+      .map((id) => creatives.find((c) => c.id === id)?.video_url)
+      .filter((u): u is string => Boolean(u));
+    if (urls.length < 2) {
+      setNote("Pick at least 2 clips to stitch");
+      return;
+    }
+    setNote(null);
+    startStitch(async () => {
+      const r = await stitchClips({ clipUrls: urls, title: "Assembled story" });
+      if (!r.ok) {
+        setNote(r.error || "Stitch failed");
+        return;
+      }
+      setSelectedClips([]);
+      setStoryMode("generate");
+      router.refresh();
+    });
+  }
+
   return (
     <div>
       <ScreenHeader
@@ -201,7 +293,98 @@ export default function PublishClient({
       {tab === "video" && <VideoPanel />}
       {tab === "stories" && (
         <>
-          <StoryboardPanel />
+          <div className="mb-4 inline-flex items-center gap-1 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] p-0.5">
+            {(["generate", "assemble"] as const).map((m) => {
+              const on = storyMode === m;
+              return (
+                <button
+                  key={m}
+                  onClick={() => setStoryMode(m)}
+                  className="rounded-full px-3.5 py-1.5 text-[12.5px] font-bold transition-colors"
+                  style={{ background: on ? ACCENT : "transparent", color: on ? "#fff" : "var(--color-ink-muted)" }}
+                >
+                  {m === "generate" ? "Generate new" : "Assemble clips"}
+                </button>
+              );
+            })}
+          </div>
+
+          {storyMode === "generate" ? (
+            <StoryboardPanel />
+          ) : (
+            <div className="mb-5 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
+              <p className="text-[15px] font-bold">Assemble clips into a story</p>
+              <p className="mb-3 text-[12.5px] text-[var(--color-ink-muted)]">
+                Pick finished clips (Draft or Cinematic) in the order you want them — they&apos;re
+                crossfade-stitched into one video. Your source clips stay untouched.
+              </p>
+              {finishedClips.length === 0 ? (
+                <p className="text-[12.5px] text-[var(--color-ink-muted)]">
+                  No finished clips yet — make a test or cinematic video first.
+                </p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {finishedClips.map((c) => {
+                      const idx = selectedClips.indexOf(c.id);
+                      const sel = idx >= 0;
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => toggleClip(c.id)}
+                          className="relative aspect-[9/16] overflow-hidden rounded-xl bg-[#10151B] text-left"
+                          style={{ outline: sel ? `3px solid ${ACCENT}` : "none", outlineOffset: "-1px" }}
+                        >
+                          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                          <video
+                            src={`${c.video_url}#t=0.1`}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            className="h-full w-full object-cover"
+                          />
+                          <span
+                            className="absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-bold"
+                            style={{ background: "rgba(0,0,0,0.6)", color: "#fff" }}
+                          >
+                            {tierLabel(c)}
+                          </span>
+                          {sel && (
+                            <span
+                              className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full text-[10px] font-extrabold text-white"
+                              style={{ background: ACCENT }}
+                            >
+                              {idx + 1}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <span className="text-[12px] font-semibold text-[var(--color-ink-muted)]">
+                      {selectedClips.length} selected
+                    </span>
+                    <button
+                      onClick={doStitch}
+                      disabled={stitching || selectedClips.length < 2}
+                      className="ml-auto inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-[14px] font-bold text-white disabled:opacity-60"
+                      style={{ background: ACCENT }}
+                    >
+                      {stitching ? <Loader2 size={15} className="animate-spin" /> : <Clapperboard size={15} />}
+                      Stitch {selectedClips.length >= 2 ? selectedClips.length : ""} clips into a story
+                    </button>
+                  </div>
+                </>
+              )}
+              {note && (
+                <p className="mt-2 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
+                  {note}
+                </p>
+              )}
+            </div>
+          )}
+
           <StoriesList storyboards={storyboards} />
         </>
       )}
@@ -396,7 +579,7 @@ export default function PublishClient({
                     ) : (
                       <Zap size={14} />
                     )}
-                    Generate Draft Video
+                    Make test video
                   </button>
                   {/* Expensive AI-video path (KIE), demoted to secondary. */}
                   <select
@@ -425,6 +608,19 @@ export default function PublishClient({
                   </button>
                 </>
               )}
+              {/* Upgrade a finished cheap draft → accurate Cinematic (recipe review + confirm). */}
+              {review.video_url && review.render_mode === "draft" && (
+                <button
+                  onClick={() => openUpgrade(review)}
+                  disabled={cineBuilding || cineRendering}
+                  className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[13px] font-bold text-white disabled:opacity-60"
+                  style={{ background: ACCENT }}
+                  title="Reuse this tested draft's recipe + frames to render a full-AI Cinematic version"
+                >
+                  {cineBuilding ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  Upgrade to Cinematic…
+                </button>
+              )}
               {(review.image_url || review.video_url) && (
                 <a
                   href={review.video_url || review.image_url || "#"}
@@ -444,6 +640,83 @@ export default function PublishClient({
                 <Trash2 size={14} /> {pending && busyId === review.id ? "Deleting…" : "Delete"}
               </button>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Cinematic upgrade review (recipe + cost + explicit confirm) ─────── */}
+      <Modal
+        open={!!cineFor}
+        onClose={() => {
+          if (cineRendering) return;
+          setCineFor(null);
+          setCinePlan(null);
+        }}
+        accent={ACCENT}
+        title={<span>Upgrade to Cinematic</span>}
+      >
+        {cineBuilding || !cinePlan ? (
+          <div className="grid place-items-center gap-2 py-12 text-[13px] text-[var(--color-ink-muted)]">
+            <Loader2 size={22} className="animate-spin" /> Building cinematic recipe…
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <p className="text-[12.5px] leading-relaxed text-[var(--color-ink-muted)]">
+              Same script &amp; structure as your tested draft — every scene rendered as full AI and
+              seeded from its own frames so it matches the look. Edit anything below; <b>nothing renders
+              until you confirm.</b>
+            </p>
+
+            <SceneRecipe plan={cinePlan} onChange={setCinePlan} aiEnabled hideTotal />
+
+            <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2.5 text-[13px]">
+              <Film size={15} className="text-[var(--color-ink-muted)]" />
+              <span className="font-semibold text-[var(--color-ink-muted)]">AI model</span>
+              <select
+                value={cineProvider}
+                onChange={(e) => setCineProvider(e.target.value as VideoProvider)}
+                className="ml-auto bg-transparent text-[13px] font-bold outline-none"
+              >
+                {VIDEO_PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {note && (
+              <p className="rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
+                {note}
+              </p>
+            )}
+
+            {(() => {
+              const aiCount = cinePlan.scenes.filter((s) => s.renderMethod === "ai_motion").length;
+              return (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setCineFor(null);
+                      setCinePlan(null);
+                    }}
+                    disabled={cineRendering}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3.5 py-2.5 text-[13px] font-semibold disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmCinematic}
+                    disabled={cineRendering || aiCount === 0}
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-[14px] font-bold text-white disabled:opacity-60"
+                    style={{ background: ACCENT }}
+                  >
+                    {cineRendering ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                    Render cinematic · ~${aiCount}.00
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         )}
       </Modal>
