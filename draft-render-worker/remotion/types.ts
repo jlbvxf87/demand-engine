@@ -68,6 +68,9 @@ export type DraftScene = {
   aiClipUrl?: string;
   /** KIE submit attempts (for self-heal). */
   aiAttempts?: number;
+  /** Clean (captionless) still captured from the draft render — the image-to-video
+   *  seed used when this scene is upgraded to Cinematic, so the AI matches the tested look. */
+  seedFrameUrl?: string;
 };
 
 export type DraftRenderPlan = {
@@ -78,6 +81,10 @@ export type DraftRenderPlan = {
   scenes: DraftScene[];
   /** Estimated total render cost, in cents (sum of scenes). */
   estimatedCostCents: number;
+  /** Set on a Cinematic upgrade: the draft creative this plan was derived from (lineage). */
+  sourceCreativeId?: string;
+  /** Render-time flag (seed-frame capture only): hide captions/overlays so the still is clean media. */
+  captionless?: boolean;
 };
 
 /** The id Remotion's registerRoot binds the composition to. */

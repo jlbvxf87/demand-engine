@@ -9,10 +9,13 @@ const HILITE = "#F0FF41";
 
 const FONT = "Helvetica, Arial, sans-serif";
 
-/** One full-screen 9:16 scene: optional Ken-Burns image + animated caption. */
-export const Scene: React.FC<{ scene: DraftScene; durationInFrames: number }> = ({
+/** One full-screen 9:16 scene: optional Ken-Burns image + animated caption.
+ *  `captionless` renders clean media only (no caption, no darkening overlay) — used
+ *  to capture the image-to-video seed still for a Cinematic upgrade. */
+export const Scene: React.FC<{ scene: DraftScene; durationInFrames: number; captionless?: boolean }> = ({
   scene,
   durationInFrames,
+  captionless,
 }) => {
   const frame = useCurrentFrame();
   // An ai_motion scene whose KIE clip has landed plays the clip as its backdrop.
@@ -74,9 +77,11 @@ export const Scene: React.FC<{ scene: DraftScene; durationInFrames: number }> = 
             muted
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
-          <AbsoluteFill
-            style={{ background: "linear-gradient(to top, rgba(0,0,0,0.82) 16%, rgba(0,0,0,0) 56%)" }}
-          />
+          {!captionless && (
+            <AbsoluteFill
+              style={{ background: "linear-gradient(to top, rgba(0,0,0,0.82) 16%, rgba(0,0,0,0) 56%)" }}
+            />
+          )}
         </AbsoluteFill>
       ) : hasImage ? (
         /* Image layer (cover, with motion) */
@@ -91,13 +96,16 @@ export const Scene: React.FC<{ scene: DraftScene; durationInFrames: number }> = 
               transform: `scale(${imgScale}) translate(${imgX}px, ${imgY}px)`,
             }}
           />
-          <AbsoluteFill
-            style={{ background: "linear-gradient(to top, rgba(0,0,0,0.82) 16%, rgba(0,0,0,0) 56%)" }}
-          />
+          {!captionless && (
+            <AbsoluteFill
+              style={{ background: "linear-gradient(to top, rgba(0,0,0,0.82) 16%, rgba(0,0,0,0) 56%)" }}
+            />
+          )}
         </AbsoluteFill>
       ) : null}
 
-      {/* Caption */}
+      {/* Caption — omitted for captionless seed stills */}
+      {!captionless && (
       <AbsoluteFill
         style={{
           justifyContent: hasMedia ? "flex-end" : "center",
@@ -139,6 +147,7 @@ export const Scene: React.FC<{ scene: DraftScene; durationInFrames: number }> = 
           )}
         </div>
       </AbsoluteFill>
+      )}
     </AbsoluteFill>
   );
 };
