@@ -38,3 +38,5 @@ cp ../remotion/*.ts ../remotion/*.tsx ./remotion/
 npm install
 SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… DRAFT_WORKER_SECRET=dev npm start
 ```
+
+<!-- deploy: auto-deploys from main via Railway watch path draft-render-worker/** -->
