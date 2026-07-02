@@ -109,7 +109,8 @@ export type AdFilters = {
 };
 
 /** Individual winning creatives, highest winner_score first (Source > Creatives tab). */
-export async function getWinningCreatives(f: AdFilters = {}): Promise<AdRow[]> {
+const cachedWinningCreatives = unstable_cache(
+  async (f: AdFilters): Promise<AdRow[]> => {
   try {
     const sb = getServiceClient();
     const limit = f.limit ?? 60;
@@ -133,13 +134,24 @@ export async function getWinningCreatives(f: AdFilters = {}): Promise<AdRow[]> {
   } catch {
     return [];
   }
+  },
+  ["winning-creatives"],
+  { revalidate: 120, tags: [SCALED_WINNERS_TAG] },
+);
+
+/** Winning ads by winner_score (Source library). Cached — spy_ads scan; refreshes
+ *  on new-search ingestion via SCALED_WINNERS_TAG. */
+export async function getWinningCreatives(f: AdFilters = {}): Promise<AdRow[]> {
+  return cachedWinningCreatives(f);
 }
 
-/** Total ad count (for the "Showing N of M" pager in Source > Creatives). */
+/** Total ad count (for the "Showing N of M" pager in Source > Creatives).
+ *  Estimated (planner stat) — spy_ads is large and an exact count is a full scan;
+ *  the pager only needs a ballpark. */
 export async function getCreativesCount(): Promise<number> {
   try {
     const sb = getServiceClient();
-    const { count } = await sb.from("spy_ads").select("id", { count: "exact", head: true });
+    const { count } = await sb.from("spy_ads").select("id", { count: "estimated", head: true });
     return count ?? 0;
   } catch {
     return 0;
@@ -688,32 +700,44 @@ export const getKieCredits = unstable_cache(
 export type HomeStats = { winners: number; creatives: number; videos: number; stories: number };
 
 /** Live counts for the Home dashboard. Defensive — zeros on error. */
+const cachedHomeStats = unstable_cache(
+  async (): Promise<HomeStats> => {
+    try {
+      const sb = getServiceClient();
+      // "scene" creatives are clips of a Story (counted under STORIES), not loose
+      // assets — so CREATIVES/VIDEOS count STANDALONE creatives only, matching the
+      // Create grid. A null creative_type is treated as standalone.
+      const notScene = "creative_type.is.null,creative_type.neq.scene";
+      const [ads, creatives, videos, stories] = await Promise.all([
+        // spy_ads is large — an exact count is a full scan. The header stat is a
+        // rough "how many winners" number, so use the planner estimate (fast).
+        sb.from("spy_ads").select("id", { count: "estimated", head: true }),
+        sb.from("ad_creatives").select("id", { count: "exact", head: true }).or(notScene),
+        sb
+          .from("ad_creatives")
+          .select("id", { count: "exact", head: true })
+          .or(notScene)
+          .not("video_url", "is", null),
+        sb.from("storyboards").select("id", { count: "exact", head: true }),
+      ]);
+      return {
+        winners: ads.count ?? 0,
+        creatives: creatives.count ?? 0,
+        videos: videos.count ?? 0,
+        stories: stories.count ?? 0,
+      };
+    } catch {
+      return { winners: 0, creatives: 0, videos: 0, stories: 0 };
+    }
+  },
+  ["home-stats"],
+  // Counts don't need to be real-time; 60s staleness is fine and removes 4
+  // count queries from every Home load.
+  { revalidate: 60, tags: [SCALED_WINNERS_TAG] },
+);
+
 export async function getHomeStats(): Promise<HomeStats> {
-  try {
-    const sb = getServiceClient();
-    // "scene" creatives are clips of a Story (counted under STORIES), not loose
-    // assets — so CREATIVES/VIDEOS count STANDALONE creatives only, matching the
-    // Create grid. A null creative_type is treated as standalone.
-    const notScene = "creative_type.is.null,creative_type.neq.scene";
-    const [ads, creatives, videos, stories] = await Promise.all([
-      sb.from("spy_ads").select("id", { count: "exact", head: true }),
-      sb.from("ad_creatives").select("id", { count: "exact", head: true }).or(notScene),
-      sb
-        .from("ad_creatives")
-        .select("id", { count: "exact", head: true })
-        .or(notScene)
-        .not("video_url", "is", null),
-      sb.from("storyboards").select("id", { count: "exact", head: true }),
-    ]);
-    return {
-      winners: ads.count ?? 0,
-      creatives: creatives.count ?? 0,
-      videos: videos.count ?? 0,
-      stories: stories.count ?? 0,
-    };
-  } catch {
-    return { winners: 0, creatives: 0, videos: 0, stories: 0 };
-  }
+  return cachedHomeStats();
 }
 
 export type Storyboard = {
@@ -813,21 +837,30 @@ export async function getBrands(): Promise<Brand[]> {
 const KNOWN_VERTICALS = new Set(["glp1", "trt", "peptides", "joint_pain"]);
 
 /** Distinct (real) verticals present in the ad data, for filter options. */
+const cachedVerticals = unstable_cache(
+  async (): Promise<string[]> => {
+    try {
+      const sb = getServiceClient();
+      const { data } = await sb
+        .from("spy_ads")
+        .select("vertical")
+        .not("vertical", "is", null)
+        .limit(1000);
+      const set = new Set<string>();
+      (data || []).forEach((r: Record<string, unknown>) => {
+        const v = r.vertical ? String(r.vertical) : "";
+        if (KNOWN_VERTICALS.has(v)) set.add(v);
+      });
+      return [...set].sort();
+    } catch {
+      return [];
+    }
+  },
+  ["verticals"],
+  { revalidate: 300, tags: [SCALED_WINNERS_TAG] },
+);
+
+/** Distinct known verticals present in the library (Source filter options). Cached. */
 export async function getVerticals(): Promise<string[]> {
-  try {
-    const sb = getServiceClient();
-    const { data } = await sb
-      .from("spy_ads")
-      .select("vertical")
-      .not("vertical", "is", null)
-      .limit(1000);
-    const set = new Set<string>();
-    (data || []).forEach((r: Record<string, unknown>) => {
-      const v = r.vertical ? String(r.vertical) : "";
-      if (KNOWN_VERTICALS.has(v)) set.add(v);
-    });
-    return [...set].sort();
-  } catch {
-    return [];
-  }
+  return cachedVerticals();
 }
