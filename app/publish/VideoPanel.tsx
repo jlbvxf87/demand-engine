@@ -30,7 +30,7 @@ export default function VideoPanel() {
   return (
     <div>
       <p className="mb-2 text-[13px] font-bold text-[var(--color-ink-muted)]">Render budget</p>
-      <div className="mb-4 grid grid-cols-3 gap-2">
+      <div className="mb-4 grid grid-cols-3 gap-1.5 sm:gap-2">
         {BUDGETS.map((b) => {
           const on = b.id === budget;
           return (
@@ -38,26 +38,25 @@ export default function VideoPanel() {
               key={b.id}
               onClick={() => !b.disabled && setBudget(b.id)}
               disabled={b.disabled}
-              className="flex flex-col items-start gap-1 rounded-2xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55"
+              className="flex min-w-0 flex-col items-start gap-1 overflow-hidden rounded-2xl border p-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 sm:p-3"
               style={{
                 borderColor: on ? ACCENT : "var(--color-line)",
                 background: on ? "var(--color-publish-soft)" : "var(--color-surface)",
               }}
             >
-              <span className="flex items-center gap-1.5">
+              {/* Selection is shown by the border + tint + accent color — no radio
+                  needed, which frees room so the longest label ("Cinematic") fits. */}
+              <span className="flex w-full min-w-0 items-center gap-1">
+                <b.icon size={14} className="shrink-0" style={{ color: on ? ACCENT : "var(--color-ink-muted)" }} />
                 <span
-                  className="grid h-5 w-5 place-items-center rounded-full border-2"
-                  style={{ borderColor: on ? ACCENT : "var(--color-line)" }}
+                  className="min-w-0 truncate text-[12px] font-bold leading-tight sm:text-[13.5px]"
+                  style={{ color: on ? ACCENT : "var(--color-ink)" }}
                 >
-                  {on && <span className="h-2 w-2 rounded-full" style={{ background: ACCENT }} />}
-                </span>
-                <b.icon size={15} style={{ color: on ? ACCENT : "var(--color-ink-muted)" }} />
-                <span className="text-[13.5px] font-bold" style={{ color: on ? ACCENT : "var(--color-ink)" }}>
                   {b.label}
                 </span>
               </span>
               <span className="text-[11px] font-bold tabular-nums text-[var(--color-ink-muted)]">{b.cost}</span>
-              <span className="text-[10.5px] leading-tight text-[var(--color-ink-muted)]">{b.blurb}</span>
+              <span className="text-[10px] leading-tight text-[var(--color-ink-muted)] sm:text-[10.5px]">{b.blurb}</span>
             </button>
           );
         })}
