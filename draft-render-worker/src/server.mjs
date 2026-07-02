@@ -1,6 +1,6 @@
 import http from "node:http";
-import { renderPlan, renderSeedFrames } from "./render.mjs";
-import { uploadMp4, uploadSeedFrame } from "./upload.mjs";
+import { renderPlan, renderSeedFrames, extractPoster } from "./render.mjs";
+import { uploadMp4, uploadSeedFrame, uploadPoster } from "./upload.mjs";
 
 const PORT = process.env.PORT || 8080;
 const SECRET = process.env.DRAFT_WORKER_SECRET || "";
@@ -37,6 +37,14 @@ async function processJob({ plan, creativeId, callbackUrl, captureSeeds }) {
   try {
     const local = await renderPlan(plan, creativeId);
     const video_url = await uploadMp4(local, creativeId);
+
+    // First-frame poster (generated/<id>-poster.jpg) so the tile isn't black at rest. Non-fatal.
+    try {
+      const posterPath = await extractPoster(local, creativeId);
+      if (posterPath) await uploadPoster(posterPath, creativeId);
+    } catch (e) {
+      console.error(`poster failed ${creativeId}:`, e?.message);
+    }
 
     let seedFrames;
     if (captureSeeds) {

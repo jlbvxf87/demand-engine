@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Play, Download, Share2, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui";
 import { providerLabel } from "@/lib/video";
+import { posterFor } from "@/lib/format";
 import { deleteCreative } from "@/app/actions";
 
 export type HomeVideo = {
@@ -68,6 +69,7 @@ export default function LatestVideos({ videos }: { videos: HomeVideo[] }) {
               {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
               <video
                 src={`${v.video_url}#t=0.1`}
+                poster={posterFor(v.video_url)}
                 muted
                 playsInline
                 preload="metadata"
@@ -96,6 +98,7 @@ export default function LatestVideos({ videos }: { videos: HomeVideo[] }) {
               {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
               <video
                 src={open.video_url || ""}
+                poster={posterFor(open.video_url)}
                 controls
                 autoPlay
                 loop

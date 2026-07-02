@@ -106,7 +106,7 @@ export default function SceneRecipe({
                 <button
                   onClick={() => move(i, -1)}
                   disabled={i === 0}
-                  className="grid h-6 w-6 place-items-center rounded-md border border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-30"
+                  className="grid h-8 w-8 sm:h-6 sm:w-6 place-items-center rounded-md border border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-30"
                   title="Move up"
                 >
                   <ArrowUp size={12} />
@@ -114,7 +114,7 @@ export default function SceneRecipe({
                 <button
                   onClick={() => move(i, 1)}
                   disabled={i === plan.scenes.length - 1}
-                  className="grid h-6 w-6 place-items-center rounded-md border border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-30"
+                  className="grid h-8 w-8 sm:h-6 sm:w-6 place-items-center rounded-md border border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-30"
                   title="Move down"
                 >
                   <ArrowDown size={12} />
@@ -122,7 +122,7 @@ export default function SceneRecipe({
                 <button
                   onClick={() => remove(i)}
                   disabled={plan.scenes.length <= 1}
-                  className="grid h-6 w-6 place-items-center rounded-md border border-[var(--color-danger-soft)] text-[var(--color-danger)] disabled:opacity-30"
+                  className="grid h-8 w-8 sm:h-6 sm:w-6 place-items-center rounded-md border border-[var(--color-danger-soft)] text-[var(--color-danger)] disabled:opacity-30"
                   title="Remove scene"
                 >
                   <X size={12} />

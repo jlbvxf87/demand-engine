@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Search, ArrowRight, Sparkles, ExternalLink, Wallet } from "lucide-react";
+import { Search, ArrowRight, Sparkles, ExternalLink, Wallet, Play } from "lucide-react";
 import { Card } from "@/components/ui";
 import { getHomeStats, getScaledWinners, getGeneratedCreatives, getKieCredits } from "@/lib/data";
 import { compact, initials } from "@/lib/format";
@@ -147,13 +147,22 @@ export default async function HomePage() {
                 <a href={meta ?? "#"} target="_blank" rel="noreferrer" className="block">
                   <div className="relative aspect-[4/3] w-full overflow-hidden">
                     {ad.creative_media_url ? (
-                      ad.creative_media_type === "video" ? (
-                        // eslint-disable-next-line jsx-a11y/media-has-caption
-                        <video src={`${ad.creative_media_url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full bg-black object-cover" />
-                      ) : (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={ad.creative_media_url} alt={ad.page_name || "ad"} className="h-full w-full bg-black object-cover" />
-                      )
+                      // Wrap in a brand gradient so a loading/broken/at-rest video is
+                      // never a bare black box; a play glyph marks video creatives.
+                      <div className="relative h-full w-full bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)]">
+                        {ad.creative_media_type === "video" ? (
+                          <>
+                            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                            <video src={`${ad.creative_media_url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                            <span className="pointer-events-none absolute left-1/2 top-1/2 grid h-9 w-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/45 text-white backdrop-blur-sm">
+                              <Play size={15} fill="currentColor" />
+                            </span>
+                          </>
+                        ) : (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={ad.creative_media_url} alt={ad.page_name || "ad"} className="h-full w-full object-cover" />
+                        )}
+                      </div>
                     ) : ad.page_screenshot_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={ad.page_screenshot_url} alt={ad.page_name || "ad"} className="h-full w-full object-cover object-top" />

@@ -19,6 +19,21 @@ export function money(lower: number | null, upper: number | null): string {
   return "$" + compact(mid);
 }
 
+/**
+ * Poster (first-frame) URL for a rendered video, derived by convention from the
+ * video URL: `generated/<id>.mp4` → `generated/<id>-poster.jpg`. The render
+ * workers upload this alongside the mp4 (frame 0). Returns undefined when no
+ * poster can be derived (e.g. non-.mp4 or missing url) — the tile then falls
+ * back to its branded scrim. A poster URL that 404s is harmless: the browser
+ * simply shows no poster.
+ */
+export function posterFor(videoUrl: string | null | undefined): string | undefined {
+  if (!videoUrl) return undefined;
+  const [base, query] = videoUrl.split("?");
+  if (!base.endsWith(".mp4")) return undefined;
+  return base.slice(0, -4) + "-poster.jpg" + (query ? `?${query}` : "");
+}
+
 export function initials(name: string | null | undefined): string {
   if (!name) return "?";
   const parts = name.replace(/[^a-zA-Z0-9 ]/g, "").trim().split(/\s+/);

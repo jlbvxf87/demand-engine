@@ -84,7 +84,7 @@ export default function StoryboardPanel() {
         {images.map((url, i) => (
           <div
             key={url}
-            className="relative h-20 w-20 overflow-hidden rounded-xl border border-[var(--color-line)]"
+            className="relative h-16 w-16 sm:h-20 sm:w-20 overflow-hidden rounded-xl border border-[var(--color-line)]"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={url} alt={`scene ${i + 1}`} className="h-full w-full object-cover" />
@@ -102,7 +102,7 @@ export default function StoryboardPanel() {
         <button
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
-          className="grid h-20 w-20 place-items-center gap-1 rounded-xl border border-dashed border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-50"
+          className="grid h-16 w-16 sm:h-20 sm:w-20 place-items-center gap-1 rounded-xl border border-dashed border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-50"
         >
           {uploading ? (
             <Loader2 size={18} className="animate-spin" />

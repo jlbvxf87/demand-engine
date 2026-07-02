@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import { ScreenHeader, Badge, EmptyState, Modal, Tabs } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
-import { verticalLabel } from "@/lib/format";
+import { verticalLabel, posterFor } from "@/lib/format";
+import { withDownload } from "@/lib/download";
 import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
 import {
   renderVideo,
@@ -338,6 +339,7 @@ export default function PublishClient({
                           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                           <video
                             src={`${c.video_url}#t=0.1`}
+                            poster={posterFor(c.video_url)}
                             muted
                             playsInline
                             preload="metadata"
@@ -388,7 +390,7 @@ export default function PublishClient({
           <StoriesList storyboards={storyboards} />
         </>
       )}
-      {tab === "publish" && <PublishPanel publishableCount={standalone.length} />}
+      {tab === "publish" && <PublishPanel publishableCount={finishedClips.length} />}
 
       {/* ── Outputs (persistent across tabs) ───────────────────────────────── */}
       <div className="mt-6 border-t border-[var(--color-line)] pt-5">
@@ -506,6 +508,7 @@ export default function PublishClient({
                 // eslint-disable-next-line jsx-a11y/media-has-caption
                 <video
                   src={review.video_url}
+                  poster={posterFor(review.video_url)}
                   controls
                   autoPlay
                   loop
@@ -623,10 +626,10 @@ export default function PublishClient({
               )}
               {(review.image_url || review.video_url) && (
                 <a
-                  href={review.video_url || review.image_url || "#"}
-                  target="_blank"
-                  rel="noreferrer"
-                  download
+                  href={withDownload(
+                    review.video_url || review.image_url || "#",
+                    `creative-${review.id}.${review.video_url ? "mp4" : "png"}`,
+                  )}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3.5 py-2.5 text-[13px] font-semibold"
                 >
                   <Download size={14} /> Download
@@ -737,6 +740,7 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
         // eslint-disable-next-line jsx-a11y/media-has-caption
         <video
           src={`${c.video_url}#t=0.1`}
+          poster={posterFor(c.video_url)}
           muted
           loop
           playsInline
@@ -799,18 +803,22 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
         </div>
       )}
 
-      {/* Hover overlay */}
-      <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/85 via-black/10 to-transparent p-2.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-        {c.video_url && (
-          <span className="absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[var(--color-publish)]">
-            <Play size={18} className="text-white" fill="currentColor" />
-          </span>
-        )}
-        <p className="line-clamp-2 text-[11.5px] font-bold leading-snug text-white">{c.hook_text}</p>
-        <p className="mt-0.5 text-[10px] text-white/70">
-          {c.video_provider ? providerLabel(c.video_provider) : c.brand_slug || "draft"}
-        </p>
-      </div>
+      {/* Resting scrim — hook + gradient stay visible so a tile always reads as a
+          branded card (never a bare black box), even before the poster/video paints.
+          The play affordance fades in on hover. */}
+      {!rendering && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/85 via-black/15 to-transparent p-2.5">
+          {c.video_url && (
+            <span className="absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[var(--color-publish)] opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100">
+              <Play size={18} className="text-white" fill="currentColor" />
+            </span>
+          )}
+          <p className="line-clamp-2 text-[11.5px] font-bold leading-snug text-white">{c.hook_text}</p>
+          <p className="mt-0.5 text-[10px] text-white/70">
+            {c.video_provider ? providerLabel(c.video_provider) : c.brand_slug || "draft"}
+          </p>
+        </div>
+      )}
     </button>
   );
 }

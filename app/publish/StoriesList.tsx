@@ -3,6 +3,8 @@
 import { Download } from "lucide-react";
 import { Card, Badge } from "@/components/ui";
 import { providerLabel } from "@/lib/video";
+import { posterFor } from "@/lib/format";
+import { withDownload } from "@/lib/download";
 import type { Storyboard } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
@@ -51,15 +53,13 @@ export default function StoriesList({ storyboards }: { storyboards: Storyboard[]
                 {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                 <video
                   src={s.final_video_url}
+                  poster={posterFor(s.final_video_url)}
                   controls
                   playsInline
                   className="max-h-[280px] w-auto rounded-xl bg-black"
                 />
                 <a
-                  href={s.final_video_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  download
+                  href={withDownload(s.final_video_url, `story-${s.id}.mp4`)}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
                 >
                   <Download size={14} /> Download story

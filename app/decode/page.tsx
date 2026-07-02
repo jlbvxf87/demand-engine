@@ -1,4 +1,4 @@
-import { getAdDetail } from "@/lib/data";
+import { getAdDetail, getScaledWinners } from "@/lib/data";
 import DecodeClient from "./DecodeClient";
 
 export const dynamic = "force-dynamic";
@@ -13,5 +13,8 @@ export default async function DecodePage({
     ? await getAdDetail(adId)
     : { ad: null, patterns: [] };
 
-  return <DecodeClient ad={ad} patterns={patterns} />;
+  // In standalone mode (no ad picked), offer proven winners to decode in one click.
+  const winners = adId ? [] : await getScaledWinners(6);
+
+  return <DecodeClient ad={ad} patterns={patterns} winners={winners} />;
 }

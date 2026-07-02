@@ -17,7 +17,7 @@ import { ScreenHeader, Card, Badge, WinnerBadge, Tabs, EmptyState } from "@/comp
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
 import { decodeAd, decodeUrl } from "@/app/actions";
-import type { AdRow, HookPattern } from "@/lib/data";
+import type { AdRow, HookPattern, ScaledWinner } from "@/lib/data";
 
 type UrlDecode = {
   hook?: string;
@@ -36,9 +36,11 @@ type WhyRow = { icon: typeof Zap; label: string; value: string | null };
 export default function DecodeClient({
   ad,
   patterns,
+  winners = [],
 }: {
   ad: AdRow | null;
   patterns: HookPattern[];
+  winners?: ScaledWinner[];
 }) {
   const router = useRouter();
   const [tab, setTab] = useState("why");
@@ -142,6 +144,36 @@ export default function DecodeClient({
             </p>
           )}
         </Card>
+
+        {/* Quick-pick: decode a proven winner in one click (fills the standalone empty state). */}
+        {!urlResult && winners.length > 0 && (
+          <div className="mb-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[14px] font-bold">Or decode a proven winner</p>
+              <a href="/source" className="text-[12.5px] font-bold text-[var(--color-source)]">
+                Browse all in Source →
+              </a>
+            </div>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+              {winners.map((w) => (
+                <a
+                  key={w.key}
+                  href={`/decode?ad=${w.ad.id}`}
+                  className="flex items-center gap-2.5 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]"
+                >
+                  <AdThumb src={w.ad.page_screenshot_url} name={w.ad.page_name} size={44} />
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-1 text-[12.5px] font-bold">{w.ad.page_name || "Advertiser"}</p>
+                    <p className="text-[10.5px] font-semibold text-[var(--color-ink-muted)]">
+                      {w.adCount}× ads · {w.maxDays}d live
+                    </p>
+                  </div>
+                  <ArrowRight size={15} className="shrink-0 text-[var(--color-decode)]" />
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
 
         {urlResult && (
           <>

@@ -96,7 +96,7 @@ export default function DraftPanel({ tier = "draft" }: { tier?: "draft" | "motio
         {/* Optional product image */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {image ? (
-            <div className="relative h-20 w-20 overflow-hidden rounded-xl border border-[var(--color-line)]">
+            <div className="relative h-16 w-16 sm:h-20 sm:w-20 overflow-hidden rounded-xl border border-[var(--color-line)]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={image} alt="product" className="h-full w-full object-cover" />
               <button
@@ -110,7 +110,7 @@ export default function DraftPanel({ tier = "draft" }: { tier?: "draft" | "motio
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="grid h-20 w-20 place-items-center gap-1 rounded-xl border border-dashed border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-50"
+              className="grid h-16 w-16 sm:h-20 sm:w-20 place-items-center gap-1 rounded-xl border border-dashed border-[var(--color-line)] text-[var(--color-ink-muted)] disabled:opacity-50"
             >
               {uploading ? (
                 <Loader2 size={18} className="animate-spin" />

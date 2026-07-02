@@ -41,6 +41,23 @@ function normalize(input, output) {
   });
 }
 
+/** Extract frame 0 of a rendered MP4 as a JPG poster (first-frame thumbnail).
+ *  Non-fatal: resolves null if ffmpeg is missing/fails. */
+export function extractPoster(videoPath, id) {
+  return new Promise((resolve) => {
+    const out = path.join(os.tmpdir(), `poster-${id}.jpg`);
+    const args = ["-y", "-i", videoPath, "-frames:v", "1", "-q:v", "3", out];
+    let proc;
+    try {
+      proc = spawn("ffmpeg", args, { stdio: "ignore" });
+    } catch {
+      return resolve(null);
+    }
+    proc.on("error", () => resolve(null));
+    proc.on("close", (code) => resolve(code === 0 ? out : null));
+  });
+}
+
 /** Render a DraftRenderPlan to a local MP4 (template scenes + any ai_motion clips). */
 export async function renderPlan(plan, id) {
   await ensureBrowser();
