@@ -330,8 +330,8 @@ export default function PublishClient({
             <div className="mb-5 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
               <p className="text-[15px] font-bold">Assemble clips into a story</p>
               <p className="mb-3 text-[12.5px] text-[var(--color-ink-muted)]">
-                Tap finished clips to add them, <b>drag the strip to reorder</b>, then stitch into one
-                crossfaded video. Your source clips stay untouched.
+                Tap finished clips to add them, <b>reorder with ‹ ›</b>, then stitch into one crossfaded
+                video. Your source clips stay untouched.
               </p>
               {finishedClips.length === 0 ? (
                 <p className="text-[12.5px] text-[var(--color-ink-muted)]">
@@ -441,6 +441,12 @@ export default function PublishClient({
                               {idx + 1}
                             </span>
                           )}
+                          {/* Hook label so clips (esp. black-poster KIE ones) are distinguishable. */}
+                          <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-1.5">
+                            <span className="line-clamp-2 text-[9px] font-semibold leading-tight text-white">
+                              {c.hook_text}
+                            </span>
+                          </span>
                         </button>
                       );
                     })}
