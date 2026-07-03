@@ -12,6 +12,10 @@ import {
   Trash2,
   Zap,
   Sparkles,
+  X,
+  GripHorizontal,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { ScreenHeader, Badge, EmptyState, Modal, Tabs } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
@@ -251,6 +255,16 @@ export default function PublishClient({
     });
   }
 
+  function moveClip(index: number, dir: -1 | 1) {
+    setSelectedClips((prev) => {
+      const j = index + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = prev.slice();
+      [next[index], next[j]] = [next[j], next[index]];
+      return next;
+    });
+  }
+
   function toggleClip(id: string) {
     setSelectedClips((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
@@ -316,8 +330,8 @@ export default function PublishClient({
             <div className="mb-5 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
               <p className="text-[15px] font-bold">Assemble clips into a story</p>
               <p className="mb-3 text-[12.5px] text-[var(--color-ink-muted)]">
-                Pick finished clips (Draft or Cinematic) in the order you want them — they&apos;re
-                crossfade-stitched into one video. Your source clips stay untouched.
+                Tap finished clips to add them, <b>drag the strip to reorder</b>, then stitch into one
+                crossfaded video. Your source clips stay untouched.
               </p>
               {finishedClips.length === 0 ? (
                 <p className="text-[12.5px] text-[var(--color-ink-muted)]">
@@ -325,6 +339,74 @@ export default function PublishClient({
                 </p>
               ) : (
                 <>
+                  {/* Selected strip — thumbnails in play order; ‹ › to reorder, ✕ to remove. */}
+                  {selectedClips.length > 0 && (
+                    <div className="mb-3 rounded-xl bg-[var(--color-surface-2)] p-2.5">
+                      <p className="mb-1.5 flex items-center gap-1 text-[11px] font-bold text-[var(--color-ink-muted)]">
+                        <GripHorizontal size={12} /> Your story · {selectedClips.length} clip
+                        {selectedClips.length === 1 ? "" : "s"} · use ‹ › to reorder
+                      </p>
+                      <div className="no-scrollbar flex gap-2 overflow-x-auto pb-0.5">
+                        {selectedClips.map((id, i) => {
+                          const c = finishedClips.find((x) => x.id === id);
+                          if (!c) return null;
+                          return (
+                            <div key={id} className="shrink-0">
+                              <div
+                                className="relative aspect-[9/16] w-14 overflow-hidden rounded-lg bg-[#10151B]"
+                                style={{ outline: `2px solid ${ACCENT}`, outlineOffset: "-1px" }}
+                              >
+                                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                                <video
+                                  src={`${c.video_url}#t=0.1`}
+                                  poster={posterFor(c.video_url)}
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                  className="h-full w-full object-cover"
+                                />
+                                <span
+                                  className="absolute left-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full text-[9px] font-extrabold text-white"
+                                  style={{ background: ACCENT }}
+                                >
+                                  {i + 1}
+                                </span>
+                                <button
+                                  onClick={() => toggleClip(id)}
+                                  className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/65 text-white"
+                                  title="Remove"
+                                >
+                                  <X size={9} />
+                                </button>
+                              </div>
+                              <div className="mt-1 flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => moveClip(i, -1)}
+                                  disabled={i === 0}
+                                  className="grid h-5 w-5 place-items-center rounded border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] disabled:opacity-30"
+                                  title="Move left"
+                                >
+                                  <ChevronLeft size={12} />
+                                </button>
+                                <button
+                                  onClick={() => moveClip(i, 1)}
+                                  disabled={i === selectedClips.length - 1}
+                                  className="grid h-5 w-5 place-items-center rounded border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] disabled:opacity-30"
+                                  title="Move right"
+                                >
+                                  <ChevronRight size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="mb-1.5 text-[11.5px] font-bold text-[var(--color-ink-muted)]">
+                    Tap to add / remove
+                  </p>
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                     {finishedClips.map((c) => {
                       const idx = selectedClips.indexOf(c.id);
