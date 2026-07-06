@@ -714,26 +714,45 @@ export async function createStoryboard(input: {
   sceneCount?: number; // used when no reference frames are uploaded (text-to-video scenes)
   /** false = generate individual downloadable scenes and DON'T auto-stitch (default true). */
   autoStitch?: boolean;
+  /** Verbatim per-scene script: skip Sonnet and use these exact lines/shots. One per scene. */
+  scenes?: { voiceover: string; shot_type?: "talking_head" | "broll"; scene_prompt?: string; onScreen?: string }[];
 }): Promise<ActionResult> {
   const provider = input.provider ?? "kling";
   if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
   const imgs = (input.imageUrls || []).filter(Boolean);
-  // Reference frames drive the scene count; otherwise use the chosen scene count
-  // and render each scene from text (no upload required).
-  const clipCount = imgs.length >= 2 ? imgs.length : Math.max(0, Math.floor(input.sceneCount ?? 0));
+  // Verbatim scenes (if provided) drive everything; else reference frames drive the
+  // scene count; else the chosen scene count with text-to-video (no upload).
+  const explicit = (input.scenes || []).filter((s) => s?.voiceover?.trim());
+  const clipCount =
+    explicit.length >= 2
+      ? explicit.length
+      : imgs.length >= 2
+        ? imgs.length
+        : Math.max(0, Math.floor(input.sceneCount ?? 0));
   if (clipCount < 2) {
     return { ok: false, error: "Add 2+ reference frames, or pick a scene count of 2 or more." };
   }
   const prompt = (input.prompt || "").trim();
-  if (!prompt) return { ok: false, error: "A story brief is required" };
+  if (!prompt && explicit.length === 0) return { ok: false, error: "A story brief is required" };
   const durationPerClip = input.durationPerClip ?? 5;
   const autoStitch = input.autoStitch !== false; // default true
 
   try {
     const sb = getServiceClient();
-    // Ground the script in proven winners from the library so output matches/beats them.
-    const exemplars = await getWinnerExemplars(prompt);
-    const scenes = await buildMasterScript(prompt, provider, clipCount, durationPerClip, exemplars);
+    // Verbatim path: use the caller's exact lines/shots. Otherwise Sonnet writes
+    // the master script, grounded in proven winners from the library.
+    const scenes =
+      explicit.length >= 2
+        ? explicit.map((s, i) => ({
+            clip_index: i,
+            scene_prompt: (s.scene_prompt || "").trim(),
+            scene_summary: (s.onScreen || s.voiceover).slice(0, 140),
+            voiceover_lines: s.voiceover.trim(),
+            duration: durationPerClip,
+            clip_role: "",
+            shot_type: s.shot_type === "broll" ? "broll" : "talking_head",
+          }))
+        : await buildMasterScript(prompt, provider, clipCount, durationPerClip, await getWinnerExemplars(prompt));
 
     const { data: story, error: sErr } = await sb
       .from("storyboards")
