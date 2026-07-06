@@ -21,3 +21,13 @@ export function isMachineAuthed(req: Request): boolean {
   if (!header) return false;
   return safeEqual(header, key);
 }
+
+/** Accept the Supabase service-role key (already an admin-level secret) via
+ *  x-api-key, so programmatic/admin jobs can authenticate without a browser. */
+export function isServiceKeyAuthed(req: Request): boolean {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return false;
+  const header = req.headers.get('x-api-key');
+  if (!header) return false;
+  return safeEqual(header, key);
+}

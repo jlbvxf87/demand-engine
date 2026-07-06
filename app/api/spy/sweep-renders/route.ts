@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdminAuthed } from "@/lib/admin-auth";
-import { isMachineAuthed } from "@/lib/machine-auth";
+import { isMachineAuthed, isServiceKeyAuthed } from "@/lib/machine-auth";
 import { getServiceClient } from "@/lib/supabase/server";
 import { pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { persistVideoToStorage } from "@/lib/persist";
@@ -72,7 +72,7 @@ type RowOutcome = "ready" | "failed" | "failed-stale" | "noop";
  * demand (admin cookie or machine key).
  */
 async function run(req: Request) {
-  if (!isCronAuthed(req) && !isMachineAuthed(req) && !(await isAdminAuthed())) {
+  if (!isCronAuthed(req) && !isMachineAuthed(req) && !isServiceKeyAuthed(req) && !(await isAdminAuthed())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
