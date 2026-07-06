@@ -740,6 +740,13 @@ export async function getHomeStats(): Promise<HomeStats> {
   return cachedHomeStats();
 }
 
+export type StoryScene = {
+  id: string;
+  scene_index: number | null;
+  video_url: string | null;
+  hook: string | null;
+};
+
 export type Storyboard = {
   id: string;
   prompt: string;
@@ -750,6 +757,8 @@ export type Storyboard = {
   final_status: string | null;
   created_at: string;
   scenesReady: number; // scene clips that actually produced a video (ad_creatives with this storyboard_id + a video_url)
+  autoStitch: boolean; // false = "individual scenes" mode (no stitched final)
+  scenes: StoryScene[]; // the per-scene clips (for downloading individually)
 };
 
 /** Multi-scene storyboards (their scene clips are ad_creatives with this storyboard_id). */
@@ -758,12 +767,16 @@ export async function getStoryboards(limit = 8): Promise<Storyboard[]> {
     const sb = getServiceClient();
     const { data, error } = await sb
       .from("storyboards")
-      .select("id, prompt, provider, clip_count, status, final_video_url, final_status, created_at")
+      .select(
+        "id, prompt, provider, clip_count, status, final_video_url, final_status, created_at, master_script_json",
+      )
       .order("created_at", { ascending: false })
       .limit(limit);
     if (error || !data) return [];
 
-    const rows = data as Omit<Storyboard, "scenesReady">[];
+    const rows = data as (Omit<Storyboard, "scenesReady" | "autoStitch" | "scenes"> & {
+      master_script_json: { autoStitch?: boolean } | null;
+    })[];
     const ids = rows.map((s) => s.id);
 
     // One query for ALL storyboards' rendered scenes (was an N+1 fan-out of one
@@ -771,14 +784,23 @@ export async function getStoryboards(limit = 8): Promise<Storyboard[]> {
     // retried scene (an extra ad_creatives row for the same slot) can't inflate
     // the count, then clamp to clip_count so a re-render never shows >100%.
     const renderedByStory = new Map<string, Set<number>>();
+    // Per-story finished scene clips (for downloading individually in "scenes" mode).
+    const scenesByStory = new Map<string, StoryScene[]>();
     if (ids.length) {
       try {
         const { data: scenes } = await sb
           .from("ad_creatives")
-          .select("storyboard_id, scene_index")
+          .select("id, storyboard_id, scene_index, video_url, hook_text")
           .in("storyboard_id", ids)
-          .not("video_url", "is", null);
-        for (const sc of (scenes ?? []) as { storyboard_id: string | null; scene_index: number | null }[]) {
+          .not("video_url", "is", null)
+          .order("scene_index", { ascending: true });
+        for (const sc of (scenes ?? []) as {
+          id: string;
+          storyboard_id: string | null;
+          scene_index: number | null;
+          video_url: string | null;
+          hook_text: string | null;
+        }[]) {
           if (!sc.storyboard_id) continue;
           let set = renderedByStory.get(sc.storyboard_id);
           if (!set) {
@@ -787,6 +809,12 @@ export async function getStoryboards(limit = 8): Promise<Storyboard[]> {
           }
           // A null scene_index (legacy/unindexed clip) counts as a single slot.
           set.add(sc.scene_index ?? -1);
+          let list = scenesByStory.get(sc.storyboard_id);
+          if (!list) {
+            list = [];
+            scenesByStory.set(sc.storyboard_id, list);
+          }
+          list.push({ id: sc.id, scene_index: sc.scene_index, video_url: sc.video_url, hook: sc.hook_text });
         }
       } catch {
         /* leave counts at 0 on error */
@@ -796,7 +824,20 @@ export async function getStoryboards(limit = 8): Promise<Storyboard[]> {
     return rows.map((s) => {
       const distinct = renderedByStory.get(s.id)?.size ?? 0;
       const scenesReady = s.clip_count ? Math.min(distinct, s.clip_count) : distinct;
-      return { ...s, scenesReady } as Storyboard;
+      const autoStitch = s.master_script_json?.autoStitch !== false;
+      return {
+        id: s.id,
+        prompt: s.prompt,
+        provider: s.provider,
+        clip_count: s.clip_count,
+        status: s.status,
+        final_video_url: s.final_video_url,
+        final_status: s.final_status,
+        created_at: s.created_at,
+        scenesReady,
+        autoStitch,
+        scenes: scenesByStory.get(s.id) ?? [],
+      } satisfies Storyboard;
     });
   } catch {
     return [];

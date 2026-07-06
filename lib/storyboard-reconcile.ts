@@ -38,7 +38,7 @@ type SceneRow = {
 export async function reconcileStoryboards(sb: SB, origin: string): Promise<void> {
   const { data: stories } = await sb
     .from("storyboards")
-    .select("id, clip_count, provider, duration_per_clip")
+    .select("id, clip_count, provider, duration_per_clip, master_script_json")
     .eq("status", "generating");
 
   for (const s of (stories || []) as {
@@ -46,6 +46,7 @@ export async function reconcileStoryboards(sb: SB, origin: string): Promise<void
     clip_count: number;
     provider: string | null;
     duration_per_clip: number | null;
+    master_script_json: { autoStitch?: boolean } | null;
   }[]) {
     const { data: clips } = await sb
       .from("ad_creatives")
@@ -107,6 +108,18 @@ export async function reconcileStoryboards(sb: SB, origin: string): Promise<void
       return false;
     });
     if (!allReady && !settled) continue; // still rendering / retrying
+
+    // "Individual scenes" mode: the user wants each scene as its own downloadable
+    // clip, NOT auto-stitched. Once all scenes have settled, mark the story done
+    // (no final_video_url) and skip the stitch worker entirely.
+    if (s.master_script_json?.autoStitch === false) {
+      await sb
+        .from("storyboards")
+        .update({ status: "ready", final_status: "none" })
+        .eq("id", s.id)
+        .eq("status", "generating");
+      continue;
+    }
 
     const worker = process.env.STITCH_WORKER_URL;
     if (!worker) continue; // no stitcher configured — scenes remain usable individually

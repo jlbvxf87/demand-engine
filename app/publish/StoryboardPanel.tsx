@@ -18,6 +18,7 @@ export default function StoryboardPanel() {
   const [model, setModel] = useState<VideoProvider>("kling");
   const [duration, setDuration] = useState(5);
   const [sceneCount, setSceneCount] = useState(4);
+  const [autoStitch, setAutoStitch] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
@@ -62,6 +63,7 @@ export default function StoryboardPanel() {
         prompt,
         provider: model,
         durationPerClip: duration,
+        autoStitch,
       });
       if (!r.ok) {
         setNote(r.error || "Storyboard failed");
@@ -76,10 +78,36 @@ export default function StoryboardPanel() {
   return (
     <Card className="mb-5 p-4" accent={ACCENT}>
       <p className="text-[15px] font-bold">Multi-scene story</p>
-      <p className="mb-3 text-[12.5px] text-[var(--color-ink-muted)]">
-        Pick how many scenes + write a story brief → Sonnet writes a master script, each scene renders
-        as a clip, and they&apos;re stitched into one video. Optionally drop a reference frame per scene
-        to lock the look.
+      <p className="mb-2.5 text-[12.5px] text-[var(--color-ink-muted)]">
+        Pick how many scenes + write a story brief → Sonnet writes a master script and renders each
+        scene as its own clip. Optionally drop a reference frame per scene to lock the look.
+      </p>
+
+      {/* Auto-stitch vs individual downloadable scenes. */}
+      <div className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] p-0.5">
+        {(
+          [
+            [true, "Stitch into one"],
+            [false, "Individual scenes"],
+          ] as const
+        ).map(([v, label]) => {
+          const on = autoStitch === v;
+          return (
+            <button
+              key={label}
+              onClick={() => setAutoStitch(v)}
+              className="rounded-full px-3 py-1.5 text-[12px] font-bold transition-colors"
+              style={{ background: on ? ACCENT : "transparent", color: on ? "#fff" : "var(--color-ink-muted)" }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mb-3 text-[11.5px] text-[var(--color-ink-muted)]">
+        {autoStitch
+          ? "Scenes are crossfade-stitched into one finished story video."
+          : "Each scene stays a separate clip you can download individually to edit — no stitching."}
       </p>
 
       <div className="mb-3 flex flex-wrap gap-2">

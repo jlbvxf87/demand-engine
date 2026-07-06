@@ -2,12 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Download, RotateCw, Trash2, Loader2 } from "lucide-react";
+import { Download, RotateCw, Trash2, Loader2, Clapperboard } from "lucide-react";
 import { Card, Badge } from "@/components/ui";
 import { providerLabel } from "@/lib/video";
 import { posterFor } from "@/lib/format";
 import { withDownload } from "@/lib/download";
-import { deleteStoryboard } from "@/app/actions";
+import { deleteStoryboard, stitchStoryboard } from "@/app/actions";
 import type { Storyboard } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
@@ -33,6 +33,17 @@ export default function StoriesList({ storyboards }: { storyboards: Storyboard[]
       const r = await deleteStoryboard(id);
       setBusyId(null);
       if (!r.ok) setNote(r.error || "Delete failed");
+      else router.refresh();
+    });
+  }
+
+  function stitch(id: string) {
+    setBusyId(id);
+    setNote(null);
+    startTransition(async () => {
+      const r = await stitchStoryboard(id);
+      setBusyId(null);
+      if (!r.ok) setNote(r.error || "Stitch failed");
       else router.refresh();
     });
   }
@@ -104,7 +115,7 @@ export default function StoriesList({ storyboards }: { storyboards: Storyboard[]
                   </button>
                 </div>
               </div>
-              {s.final_video_url && (
+              {s.final_video_url ? (
                 <div className="mt-2.5 flex flex-wrap items-center gap-3">
                   {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                   <video
@@ -121,7 +132,62 @@ export default function StoriesList({ storyboards }: { storyboards: Storyboard[]
                     <Download size={14} /> Download story
                   </a>
                 </div>
-              )}
+              ) : !s.autoStitch && s.scenes.length > 0 ? (
+                <div className="mt-2.5">
+                  {/* Individual scenes — each downloadable to edit separately. */}
+                  <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+                    {s.scenes
+                      .filter((sc) => sc.video_url)
+                      .map((sc, i) => (
+                        <div key={sc.id} className="shrink-0">
+                          <div className="relative aspect-[9/16] w-24 overflow-hidden rounded-xl bg-black">
+                            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                            <video
+                              src={`${sc.video_url}#t=0.1`}
+                              poster={posterFor(sc.video_url)}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.pause();
+                                e.currentTarget.currentTime = 0;
+                              }}
+                              className="h-full w-full object-cover"
+                            />
+                            <span
+                              className="absolute left-1 top-1 grid h-4 w-4 place-items-center rounded-full text-[9px] font-extrabold text-white"
+                              style={{ background: ACCENT }}
+                            >
+                              {i + 1}
+                            </span>
+                          </div>
+                          <a
+                            href={withDownload(sc.video_url as string, `scene-${i + 1}-${sc.id.slice(0, 6)}.mp4`)}
+                            className="mt-1 flex items-center justify-center gap-1 rounded-lg border border-[var(--color-line)] py-1 text-[10.5px] font-semibold"
+                          >
+                            <Download size={11} /> Scene {i + 1}
+                          </a>
+                        </div>
+                      ))}
+                  </div>
+                  {s.scenesReady >= 2 && (
+                    <button
+                      onClick={() => stitch(s.id)}
+                      disabled={busyId === s.id}
+                      className="mt-2 inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[12.5px] font-bold text-white disabled:opacity-60"
+                      style={{ background: ACCENT }}
+                    >
+                      {busyId === s.id ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Clapperboard size={13} />
+                      )}
+                      Stitch these into one
+                    </button>
+                  )}
+                </div>
+              ) : null}
             </Card>
           ))}
         </div>
@@ -141,6 +207,7 @@ function isStoryFinished(s: Storyboard) {
 function StoryStatus({ s }: { s: Storyboard }) {
   if (s.final_video_url) return <Badge tone="publish">Story ready</Badge>;
   if (s.status === "stitching") return <Badge tone="decode">Stitching…</Badge>;
+  if (!s.autoStitch && s.status === "ready") return <Badge tone="publish">Scenes ready</Badge>;
   if (s.status === "failed" || s.final_status === "failed") return <Badge tone="danger">Failed</Badge>;
   if (s.status === "scripting") return <Badge tone="warn">Scripting…</Badge>;
   return <Badge tone="decode">Rendering scenes…</Badge>;

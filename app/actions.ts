@@ -712,6 +712,8 @@ export async function createStoryboard(input: {
   provider?: string;
   durationPerClip?: number;
   sceneCount?: number; // used when no reference frames are uploaded (text-to-video scenes)
+  /** false = generate individual downloadable scenes and DON'T auto-stitch (default true). */
+  autoStitch?: boolean;
 }): Promise<ActionResult> {
   const provider = input.provider ?? "kling";
   if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
@@ -725,6 +727,7 @@ export async function createStoryboard(input: {
   const prompt = (input.prompt || "").trim();
   if (!prompt) return { ok: false, error: "A story brief is required" };
   const durationPerClip = input.durationPerClip ?? 5;
+  const autoStitch = input.autoStitch !== false; // default true
 
   try {
     const sb = getServiceClient();
@@ -740,7 +743,8 @@ export async function createStoryboard(input: {
         clip_count: clipCount,
         duration_per_clip: durationPerClip,
         status: "generating",
-        master_script_json: { scenes },
+        // autoStitch lives in the script JSON (no dedicated column) — reconcile reads it.
+        master_script_json: { scenes, autoStitch },
         final_status: "none",
       })
       .select("id")
@@ -1099,6 +1103,45 @@ export async function stitchClips(input: { clipUrls: string[]; title?: string })
     }
     revalidatePath("/publish");
     return { ok: true, data: { storyboard_id: storyboardId } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Stitch failed" };
+  }
+}
+
+/** Combine an "individual scenes" story into one video later — stitch its own
+ *  finished scene clips in scene order (in place; no duplicate story). */
+export async function stitchStoryboard(id: string): Promise<ActionResult> {
+  if (!id) return { ok: false, error: "id required" };
+  const worker = process.env.STITCH_WORKER_URL;
+  if (!worker) return { ok: false, error: "Stitch worker not configured" };
+  try {
+    const sb = getServiceClient();
+    const { data: scenes } = await sb
+      .from("ad_creatives")
+      .select("video_url")
+      .eq("storyboard_id", id)
+      .not("video_url", "is", null)
+      .order("scene_index", { ascending: true });
+    const urls = ((scenes as { video_url: string }[] | null) || []).map((s) => s.video_url).filter(Boolean);
+    if (urls.length < 2) return { ok: false, error: "Need at least 2 finished scenes to stitch" };
+
+    await sb.from("storyboards").update({ status: "stitching", final_status: "stitching" }).eq("id", id);
+    const res = await fetch(`${worker.replace(/\/$/, "")}/stitch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        storyboard_id: id,
+        clip_urls: urls,
+        callback_url: `${await baseUrl()}/api/storyboards/stitch-callback`,
+      }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      await sb.from("storyboards").update({ status: "ready", final_status: "none" }).eq("id", id);
+      return { ok: false, error: `Stitch worker HTTP ${res.status}` };
+    }
+    revalidatePath("/publish");
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Stitch failed" };
   }
