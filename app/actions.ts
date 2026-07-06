@@ -842,6 +842,9 @@ export async function replicate(input: {
   prompt: string;
   provider?: string;
   count?: number;
+  /** "merge" (default): all images guide ONE recreation, rendered `count` times.
+   *  "perImage": each image becomes its own standalone clip (N images → N clips). */
+  mode?: "merge" | "perImage";
 }): Promise<ActionResult> {
   const provider = input.provider ?? "seedance";
   if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
@@ -850,18 +853,26 @@ export async function replicate(input: {
   const prompt = (input.prompt || "").trim();
   if (!prompt) return { ok: false, error: "An instruction prompt is required" };
   const count = Math.max(1, Math.min(6, input.count ?? 3));
+  const mode = input.mode === "perImage" ? "perImage" : "merge";
+
+  // perImage: one job per image (each seeds its own clip). merge: `count` jobs,
+  // each seeded by the hero image + all others as guides.
+  const jobs =
+    mode === "perImage"
+      ? refs.map((r) => ({ image: r, guides: [r] }))
+      : Array.from({ length: count }, () => ({ image: refs[0], guides: refs }));
 
   try {
     const sb = getServiceClient();
     let created = 0;
     let lastErr: string | null = null;
-    for (let i = 0; i < count; i++) {
+    for (const job of jobs) {
       const { data: row } = await sb
         .from("ad_creatives")
         .insert({
           hook_text: prompt.slice(0, 200),
           image_prompt: prompt,
-          image_url: refs[0],
+          image_url: job.image,
           hook_type: "replicate",
           platform: "meta",
           creative_type: "replicate",
@@ -877,7 +888,7 @@ export async function replicate(input: {
           provider,
           prompt,
           mode: "image-to-video",
-          referenceImageUrls: refs,
+          referenceImageUrls: job.guides,
           duration: 9,
         });
         await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);

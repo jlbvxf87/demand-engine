@@ -22,6 +22,7 @@ export default function ReplicatePanel() {
   const [prompt, setPrompt] = useState(() => params.get("prompt") || "");
   const [model, setModel] = useState<VideoProvider>("seedance");
   const [count, setCount] = useState(3);
+  const [mode, setMode] = useState<"merge" | "perImage">("merge");
   const [uploading, setUploading] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
@@ -60,7 +61,7 @@ export default function ReplicatePanel() {
     if (!prompt.trim()) return setNote("Add an instruction prompt");
     setNote(null);
     startTransition(async () => {
-      const r = await replicate({ referenceUrls: images, prompt, provider: model, count });
+      const r = await replicate({ referenceUrls: images, prompt, provider: model, count, mode });
       if (!r.ok) {
         setNote(r.error || "Generation failed");
         return;
@@ -74,9 +75,36 @@ export default function ReplicatePanel() {
   return (
     <Card className="mb-5 p-4" accent={ACCENT}>
       <p className="text-[15px] font-bold">Cinematic — rebuild from reference</p>
-      <p className="mb-3 text-[12.5px] text-[var(--color-ink-muted)]">
-        Drop a creative you liked (an image, or a frame from a video), add instructions, and generate
-        full AI-video variations. The premium tier — reach for it to upgrade a proven winner.
+      <p className="mb-2.5 text-[12.5px] text-[var(--color-ink-muted)]">
+        Drop a creative you liked (an image, or a frame from a video) + instructions → full AI video.
+        The premium tier — reach for it to upgrade a proven winner.
+      </p>
+
+      {/* Multi-image mode: merge (all images guide one recreation) vs one clip per image. */}
+      <div className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] p-0.5">
+        {(
+          [
+            ["merge", "Merge into one"],
+            ["perImage", "One per image"],
+          ] as const
+        ).map(([m, label]) => {
+          const on = mode === m;
+          return (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className="rounded-full px-3 py-1.5 text-[12px] font-bold transition-colors"
+              style={{ background: on ? ACCENT : "transparent", color: on ? "#fff" : "var(--color-ink-muted)" }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mb-3 text-[11.5px] text-[var(--color-ink-muted)]">
+        {mode === "merge"
+          ? "All images guide ONE recreation — render it a few times to pick the best."
+          : "Each image becomes its OWN standalone clip — they land in Outputs to assemble."}
       </p>
 
       {/* Reference strip */}
@@ -88,11 +116,13 @@ export default function ReplicatePanel() {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={url} alt="reference" className="h-full w-full object-cover" />
-            {i === 0 && (
-              <span className="absolute left-1 top-1 rounded bg-[var(--color-publish)] px-1 py-0.5 text-[8px] font-bold text-white">
-                REF
-              </span>
-            )}
+            {/* merge: #1 is the hero REF, the rest are guides. perImage: each makes a clip. */}
+            <span
+              className="absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-bold text-white"
+              style={{ background: mode === "perImage" || i === 0 ? ACCENT : "rgba(0,0,0,0.55)" }}
+            >
+              {mode === "perImage" ? i + 1 : i === 0 ? "REF" : "guide"}
+            </span>
             <button
               onClick={() => setImages(images.filter((u) => u !== url))}
               className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/60 text-white"
@@ -120,17 +150,23 @@ export default function ReplicatePanel() {
       />
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <select
-          value={count}
-          onChange={(e) => setCount(Number(e.target.value))}
-          className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2 text-[13px] font-bold outline-none"
-        >
-          {[1, 2, 3, 4, 5, 6].map((n) => (
-            <option key={n} value={n}>
-              {n} video{n > 1 ? "s" : ""}
-            </option>
-          ))}
-        </select>
+        {mode === "merge" ? (
+          <select
+            value={count}
+            onChange={(e) => setCount(Number(e.target.value))}
+            className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2 text-[13px] font-bold outline-none"
+          >
+            {[1, 2, 3, 4, 5, 6].map((n) => (
+              <option key={n} value={n}>
+                {n} variation{n > 1 ? "s" : ""}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-2)] px-3 py-2 text-[13px] font-bold text-[var(--color-ink-muted)]">
+            {images.length || 0} clip{images.length === 1 ? "" : "s"} · one per image
+          </span>
+        )}
         <span className="text-[12px] text-[var(--color-ink-muted)]">Est. $3–10 each</span>
         <button
           onClick={generate}
@@ -139,7 +175,9 @@ export default function ReplicatePanel() {
           style={{ background: ACCENT }}
         >
           {pending ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-          Render AI video
+          {mode === "perImage"
+            ? `Render ${images.length || ""} clip${images.length === 1 ? "" : "s"}`
+            : "Render AI video"}
         </button>
       </div>
 
