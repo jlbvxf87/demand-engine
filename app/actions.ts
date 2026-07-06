@@ -724,12 +724,14 @@ export async function createStoryboard(input: {
   // scene count; else the chosen scene count with text-to-video (no upload).
   const explicit = (input.scenes || []).filter((s) => s?.voiceover?.trim());
   const clipCount =
-    explicit.length >= 2
+    explicit.length >= 1
       ? explicit.length
       : imgs.length >= 2
         ? imgs.length
         : Math.max(0, Math.floor(input.sceneCount ?? 0));
-  if (clipCount < 2) {
+  // Explicit verbatim scripts may be a single clip; brief-based stories need 2+.
+  const minClips = explicit.length >= 1 ? 1 : 2;
+  if (clipCount < minClips) {
     return { ok: false, error: "Add 2+ reference frames, or pick a scene count of 2 or more." };
   }
   const prompt = (input.prompt || "").trim();
@@ -742,7 +744,7 @@ export async function createStoryboard(input: {
     // Verbatim path: use the caller's exact lines/shots. Otherwise Sonnet writes
     // the master script, grounded in proven winners from the library.
     const scenes =
-      explicit.length >= 2
+      explicit.length >= 1
         ? explicit.map((s, i) => ({
             clip_index: i,
             scene_prompt: (s.scene_prompt || "").trim(),
