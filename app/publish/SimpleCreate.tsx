@@ -1,0 +1,467 @@
+"use client";
+
+/**
+ * SimpleCreate — the whole Create flow on ONE screen:
+ *   1. Write a script, pick how many videos (scenes) it needs, pick a model, Generate.
+ *   2. Every clip ever rendered shows in the grid below until deleted.
+ *   3. Select finished clips to stitch into one video or download them.
+ * (The old tabbed console lives on in PublishClient.tsx if it's ever needed again.)
+ */
+
+import { useState, useEffect, useRef, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Play,
+  Download,
+  Clapperboard,
+  Loader2,
+  Trash2,
+  Sparkles,
+  X,
+  Film,
+  RefreshCw,
+} from "lucide-react";
+import { ScreenHeader, Badge, EmptyState } from "@/components/ui";
+import { posterFor } from "@/lib/format";
+import { withDownload } from "@/lib/download";
+import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
+import {
+  createStoryboard,
+  renderVideo,
+  pollVideoJobs,
+  deleteCreative,
+  stitchClips,
+} from "@/app/actions";
+import type { Creative, Storyboard } from "@/lib/data";
+
+const ACCENT = "var(--color-publish)";
+const SCENE_CHOICES = [1, 2, 3, 4, 5, 6];
+
+function isRendering(c: Creative) {
+  return (
+    c.video_status === "queued" ||
+    c.video_status === "rendering" ||
+    c.video_status === "compositing"
+  );
+}
+
+function fmtElapsed(secs: number) {
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+}
+
+/** Seconds a clip has been rendering, anchored to the row's created_at. */
+function useRenderElapsed(active: boolean, sinceIso?: string): number {
+  const [secs, setSecs] = useState(0);
+  const startRef = useRef<number>(0);
+  if (active && startRef.current === 0) {
+    const t = sinceIso ? new Date(sinceIso).getTime() : NaN;
+    startRef.current = Number.isFinite(t) ? t : Date.now();
+  }
+  if (!active && startRef.current !== 0) startRef.current = 0;
+  useEffect(() => {
+    if (!active) {
+      setSecs(0);
+      return;
+    }
+    const tick = () => setSecs(Math.max(0, Math.floor((Date.now() - startRef.current) / 1000)));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [active]);
+  return secs;
+}
+
+export default function SimpleCreate({
+  creatives,
+  storyboards,
+}: {
+  creatives: Creative[];
+  storyboards: Storyboard[];
+}) {
+  const router = useRouter();
+  const [script, setScript] = useState("");
+  const [sceneCount, setSceneCount] = useState(1);
+  const [model, setModel] = useState<VideoProvider>("kling");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [pending, startTransition] = useTransition();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const anyRendering = creatives.some(isRendering);
+  const anyStitching = storyboards.some((s) =>
+    ["scripting", "generating", "stitching"].includes(s.status)
+  );
+  const finished = creatives.filter((c) => c.video_url && !isRendering(c));
+  const stitched = storyboards.filter((s) => s.final_video_url);
+
+  // Poll KIE + refresh while anything is in flight.
+  useEffect(() => {
+    if (!anyRendering && !anyStitching) return;
+    let alive = true;
+    const tick = async () => {
+      await pollVideoJobs();
+      if (alive) router.refresh();
+    };
+    const iv = setInterval(tick, 6000);
+    return () => {
+      alive = false;
+      clearInterval(iv);
+    };
+  }, [anyRendering, anyStitching, router]);
+
+  function generate() {
+    const prompt = script.trim();
+    if (!prompt) {
+      setNote("Write a script first");
+      return;
+    }
+    setNote(null);
+    startTransition(async () => {
+      const r = await createStoryboard({
+        prompt,
+        provider: model,
+        sceneCount,
+        autoStitch: false, // clips land individually in the grid; stitch by hand below
+      });
+      if (!r.ok) setNote(r.error || "Generation failed");
+      else {
+        setScript("");
+        router.refresh();
+      }
+    });
+  }
+
+  function retry(id: string) {
+    setBusyId(id);
+    setNote(null);
+    startTransition(async () => {
+      const r = await renderVideo(id, model);
+      setBusyId(null);
+      if (!r.ok) setNote(r.error || "Render failed");
+      else router.refresh();
+    });
+  }
+
+  function del(id: string) {
+    if (!confirm("Delete this clip permanently? This can't be undone.")) return;
+    setBusyId(id);
+    setNote(null);
+    startTransition(async () => {
+      const r = await deleteCreative(id);
+      setBusyId(null);
+      if (!r.ok) setNote(r.error || "Delete failed");
+      else {
+        setSelected((s) => s.filter((x) => x !== id));
+        router.refresh();
+      }
+    });
+  }
+
+  function toggle(id: string) {
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  }
+
+  function stitchSelected() {
+    const urls = selected
+      .map((id) => finished.find((c) => c.id === id)?.video_url)
+      .filter(Boolean) as string[];
+    if (urls.length < 2) {
+      setNote("Select at least 2 finished clips to stitch");
+      return;
+    }
+    setNote(null);
+    startTransition(async () => {
+      const r = await stitchClips({ clipUrls: urls, title: "Stitched video" });
+      if (!r.ok) setNote(r.error || "Stitch failed");
+      else {
+        setSelected([]);
+        router.refresh();
+      }
+    });
+  }
+
+  function downloadSelected() {
+    selected.forEach((id, i) => {
+      const c = finished.find((x) => x.id === id);
+      if (!c?.video_url) return;
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = withDownload(c.video_url as string, `clip-${i + 1}-${id.slice(0, 6)}.mp4`);
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, i * 600); // stagger so the browser doesn't swallow downloads
+    });
+  }
+
+  return (
+    <div>
+      <ScreenHeader
+        title="Create"
+        subtitle="Script → videos. Everything you render stays in the grid until you delete it."
+        badge={creatives.length ? "ready" : "empty"}
+        badgeTone={creatives.length ? "publish" : "neutral"}
+      />
+
+      {/* ── 1 · Script → videos ─────────────────────────────────────────── */}
+      <div className="mb-5 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
+        <textarea
+          value={script}
+          onChange={(e) => setScript(e.target.value)}
+          rows={4}
+          placeholder="Write your script or describe the video… (multiple scenes? bump the video count and the script is split across them)"
+          className="w-full resize-y rounded-xl border border-[var(--color-line)] bg-transparent p-3 text-[14px] outline-none"
+        />
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[13px]">
+            <Clapperboard size={15} className="text-[var(--color-ink-muted)]" />
+            <span className="font-semibold text-[var(--color-ink-muted)]">Videos</span>
+            <select
+              value={sceneCount}
+              onChange={(e) => setSceneCount(Number(e.target.value))}
+              className="bg-transparent text-[13px] font-bold outline-none"
+            >
+              {SCENE_CHOICES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[13px]">
+            <Film size={15} className="text-[var(--color-ink-muted)]" />
+            <span className="font-semibold text-[var(--color-ink-muted)]">Model</span>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value as VideoProvider)}
+              className="bg-transparent text-[13px] font-bold outline-none"
+            >
+              {VIDEO_PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            onClick={generate}
+            disabled={pending || !script.trim()}
+            className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50"
+            style={{ background: ACCENT }}
+          >
+            {pending ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            Generate {sceneCount} video{sceneCount > 1 ? "s" : ""}
+          </button>
+          {note && <span className="text-[12.5px] font-semibold text-[var(--color-danger)]">{note}</span>}
+        </div>
+      </div>
+
+      {/* ── 2 · Selection bar ───────────────────────────────────────────── */}
+      {selected.length > 0 && (
+        <div className="sticky top-2 z-10 mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5 shadow-sm">
+          <span className="px-1 text-[12.5px] font-bold">{selected.length} selected</span>
+          <button
+            onClick={stitchSelected}
+            disabled={pending || selected.length < 2}
+            className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12.5px] font-bold text-white disabled:opacity-50"
+            style={{ background: ACCENT }}
+          >
+            {pending ? <Loader2 size={13} className="animate-spin" /> : <Clapperboard size={13} />}
+            Stitch into one
+          </button>
+          <button
+            onClick={downloadSelected}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-semibold"
+          >
+            <Download size={13} /> Download
+          </button>
+          <button
+            onClick={() => setSelected([])}
+            className="inline-flex items-center gap-1 rounded-xl px-2 py-1.5 text-[12.5px] font-semibold text-[var(--color-ink-muted)]"
+          >
+            <X size={13} /> Clear
+          </button>
+        </div>
+      )}
+
+      {/* ── 3 · All clips ───────────────────────────────────────────────── */}
+      {creatives.length === 0 ? (
+        <EmptyState
+          icon={Play}
+          title="No clips yet"
+          hint="Write a script above and hit Generate — your videos land here."
+        />
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          {creatives.map((c) => (
+            <ClipTile
+              key={c.id}
+              c={c}
+              selected={selected.includes(c.id)}
+              busy={busyId === c.id}
+              onToggle={() => toggle(c.id)}
+              onRetry={() => retry(c.id)}
+              onDelete={() => del(c.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── 4 · Stitched videos ─────────────────────────────────────────── */}
+      {(stitched.length > 0 || anyStitching) && (
+        <div className="mt-6">
+          <p className="mb-2 text-[15px] font-bold">Stitched videos</p>
+          {anyStitching && (
+            <p className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--color-ink-muted)]">
+              <Loader2 size={13} className="animate-spin" /> Stitching in progress…
+            </p>
+          )}
+          <div className="flex flex-wrap gap-3">
+            {stitched.map((s) => (
+              <div
+                key={s.id}
+                className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5"
+              >
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video
+                  src={s.final_video_url as string}
+                  poster={posterFor(s.final_video_url)}
+                  controls
+                  playsInline
+                  className="max-h-[260px] w-auto rounded-xl bg-black"
+                />
+                <a
+                  href={withDownload(s.final_video_url as string, `stitched-${s.id.slice(0, 6)}.mp4`)}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-semibold"
+                >
+                  <Download size={13} /> Download
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* One clip in the grid. */
+function ClipTile({
+  c,
+  selected,
+  busy,
+  onToggle,
+  onRetry,
+  onDelete,
+}: {
+  c: Creative;
+  selected: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  onRetry: () => void;
+  onDelete: () => void;
+}) {
+  const rendering = isRendering(c);
+  const elapsed = useRenderElapsed(rendering, c.created_at);
+  const failed = !c.video_url && !rendering;
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-2xl border bg-[#10151B]"
+      style={{
+        borderColor: selected ? ACCENT : "var(--color-line)",
+        outline: selected ? `2px solid ${ACCENT}` : "none",
+        outlineOffset: "-1px",
+      }}
+    >
+      <div className="relative aspect-[9/16] w-full">
+        {c.video_url ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <video
+            src={`${c.video_url}#t=0.1`}
+            poster={posterFor(c.video_url)}
+            muted
+            playsInline
+            preload="metadata"
+            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+            onMouseLeave={(e) => {
+              e.currentTarget.pause();
+              e.currentTarget.currentTime = 0;
+            }}
+            onClick={onToggle}
+            className="h-full w-full cursor-pointer object-cover"
+          />
+        ) : c.image_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={c.image_url} alt="" className="h-full w-full object-cover opacity-70" />
+        ) : (
+          <div className="h-full w-full bg-gradient-to-b from-[#10151B] to-[#0A1E4A]" />
+        )}
+
+        {/* Status badges */}
+        <div className="absolute left-1.5 top-1.5 flex gap-1">
+          <Badge tone={rendering ? "decode" : failed ? "danger" : "publish"}>
+            {rendering
+              ? `Rendering ${fmtElapsed(elapsed)}`
+              : failed
+                ? "No video"
+                : providerLabel(c.video_provider || "") || "Video"}
+          </Badge>
+        </div>
+
+        {rendering && (
+          <div className="absolute inset-0 grid place-items-center bg-black/35">
+            <Loader2 size={22} className="animate-spin text-white" />
+          </div>
+        )}
+      </div>
+
+      {/* Hook line + actions */}
+      <div className="p-2">
+        {c.hook_text && (
+          <p className="mb-1.5 line-clamp-2 text-[11px] font-semibold text-white/90">{c.hook_text}</p>
+        )}
+        <div className="flex items-center gap-1.5">
+          {c.video_url && (
+            <>
+              <button
+                onClick={onToggle}
+                className="flex-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-white"
+                style={{ background: selected ? ACCENT : "rgba(255,255,255,0.12)" }}
+              >
+                {selected ? "Selected ✓" : "Select"}
+              </button>
+              <a
+                href={withDownload(c.video_url, `clip-${c.id.slice(0, 6)}.mp4`)}
+                title="Download"
+                className="grid h-7 w-7 place-items-center rounded-lg bg-white/10 text-white"
+              >
+                <Download size={13} />
+              </a>
+            </>
+          )}
+          {failed && (
+            <button
+              onClick={onRetry}
+              disabled={busy}
+              title="Render this clip"
+              className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-white/10 px-2 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+              Render
+            </button>
+          )}
+          <button
+            onClick={onDelete}
+            disabled={busy}
+            title="Delete clip"
+            className="grid h-7 w-7 place-items-center rounded-lg bg-white/10 text-[var(--color-danger)] disabled:opacity-50"
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
