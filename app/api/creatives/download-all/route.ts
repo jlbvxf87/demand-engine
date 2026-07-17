@@ -28,7 +28,6 @@ export async function GET() {
     .select("id, hook_text, video_url, creative_type")
     .eq("video_status", "ready")
     .not("video_url", "is", null)
-    .neq("creative_type", "scene")
     .order("created_at", { ascending: false })
     .limit(200);
 

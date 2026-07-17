@@ -704,19 +704,16 @@ const cachedHomeStats = unstable_cache(
   async (): Promise<HomeStats> => {
     try {
       const sb = getServiceClient();
-      // "scene" creatives are clips of a Story (counted under STORIES), not loose
-      // assets — so CREATIVES/VIDEOS count STANDALONE creatives only, matching the
-      // Create grid. A null creative_type is treated as standalone.
-      const notScene = "creative_type.is.null,creative_type.neq.scene";
+      // CREATIVES/VIDEOS count every creative — including Story scene clips —
+      // matching the Create grid, which shows all clips until deleted.
       const [ads, creatives, videos, stories] = await Promise.all([
         // spy_ads is large — an exact count is a full scan. The header stat is a
         // rough "how many winners" number, so use the planner estimate (fast).
         sb.from("spy_ads").select("id", { count: "estimated", head: true }),
-        sb.from("ad_creatives").select("id", { count: "exact", head: true }).or(notScene),
+        sb.from("ad_creatives").select("id", { count: "exact", head: true }),
         sb
           .from("ad_creatives")
           .select("id", { count: "exact", head: true })
-          .or(notScene)
           .not("video_url", "is", null),
         sb.from("storyboards").select("id", { count: "exact", head: true }),
       ]);

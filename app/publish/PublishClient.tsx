@@ -131,9 +131,9 @@ export default function PublishClient({
 
   const anyRendering = creatives.some(isRendering);
   const stills = creatives.filter((c) => !c.video_url && !isRendering(c));
-  // Scene clips belong to a Story (shown in the Stories tab), so keep them out of
-  // the standalone reel grid — otherwise the same footage shows twice.
-  const standalone = creatives.filter((c) => c.creative_type !== "scene");
+  // Every clip ever rendered — including Story scene clips — appears in the reel
+  // grid until deleted. (Scene clips also show grouped inside their Story card.)
+  const standalone = creatives;
   const cinematic = standalone.filter(isCinematic);
   const tests = standalone.filter((c) => !isCinematic(c));
   // Finished clips (draft or cinematic) eligible to be stitched into a Story.
