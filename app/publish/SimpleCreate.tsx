@@ -24,12 +24,14 @@ import {
 import { ScreenHeader, Badge, EmptyState } from "@/components/ui";
 import { posterFor } from "@/lib/format";
 import { withDownload } from "@/lib/download";
-import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
+import { splitScriptVerbatim } from "@/lib/split-script";
+import { VIDEO_PROVIDERS, PROVIDER_DURATIONS, providerLabel, type VideoProvider } from "@/lib/video";
 import {
   createStoryboard,
   renderVideo,
   pollVideoJobs,
   deleteCreative,
+  deleteStoryboard,
   stitchClips,
 } from "@/app/actions";
 import type { Creative, Storyboard } from "@/lib/data";
@@ -117,10 +119,18 @@ export default function SimpleCreate({
     }
     setNote(null);
     startTransition(async () => {
+      // VERBATIM: split the script ourselves and pass exact lines — the backend
+      // skips its AI rewrite entirely and the model speaks precisely these words.
+      const lines = splitScriptVerbatim(prompt, sceneCount);
+      // Pick the longest duration the model offers so speech isn't cut off
+      // (~2.5 words/sec is typical delivery; longer lines need the max anyway).
+      const durations = PROVIDER_DURATIONS[model] ?? [10];
+      const durationPerClip = durations[durations.length - 1];
       const r = await createStoryboard({
         prompt,
         provider: model,
-        sceneCount,
+        durationPerClip,
+        scenes: lines.map((voiceover) => ({ voiceover, shot_type: "talking_head" as const })),
         autoStitch: false, // clips land individually in the grid; stitch by hand below
       });
       if (!r.ok) setNote(r.error || "Generation failed");
@@ -138,6 +148,18 @@ export default function SimpleCreate({
       const r = await renderVideo(id, model);
       setBusyId(null);
       if (!r.ok) setNote(r.error || "Render failed");
+      else router.refresh();
+    });
+  }
+
+  function delStory(id: string) {
+    if (!confirm("Delete this stitched video permanently?")) return;
+    setBusyId(id);
+    setNote(null);
+    startTransition(async () => {
+      const r = await deleteStoryboard(id);
+      setBusyId(null);
+      if (!r.ok) setNote(r.error || "Delete failed");
       else router.refresh();
     });
   }
@@ -210,7 +232,7 @@ export default function SimpleCreate({
           value={script}
           onChange={(e) => setScript(e.target.value)}
           rows={4}
-          placeholder="Write your script or describe the video… (multiple scenes? bump the video count and the script is split across them)"
+          placeholder="Write your script — it's spoken word-for-word, no AI rewriting. Multiple videos? Separate scenes with blank lines (or sentences are split evenly across them)."
           className="w-full resize-y rounded-xl border border-[var(--color-line)] bg-transparent p-3 text-[14px] outline-none"
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -331,12 +353,22 @@ export default function SimpleCreate({
                   playsInline
                   className="max-h-[260px] w-auto rounded-xl bg-black"
                 />
-                <a
-                  href={withDownload(s.final_video_url as string, `stitched-${s.id.slice(0, 6)}.mp4`)}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-semibold"
-                >
-                  <Download size={13} /> Download
-                </a>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <a
+                    href={withDownload(s.final_video_url as string, `stitched-${s.id.slice(0, 6)}.mp4`)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-semibold"
+                  >
+                    <Download size={13} /> Download
+                  </a>
+                  <button
+                    onClick={() => delStory(s.id)}
+                    disabled={busyId === s.id}
+                    title="Delete stitched video"
+                    className="grid h-8 w-8 place-items-center rounded-xl border border-[var(--color-line)] text-[var(--color-danger)] disabled:opacity-50"
+                  >
+                    {busyId === s.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

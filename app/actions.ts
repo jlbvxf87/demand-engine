@@ -16,7 +16,6 @@ import { buildMasterScript } from "@/lib/storyboard";
 import { reconcileStoryboards } from "@/lib/storyboard-reconcile";
 import { reconcileMotionDrafts } from "@/lib/motion-reconcile";
 import { persistVideoToStorage } from "@/lib/persist";
-import { buildDraftPlan, type DraftRenderPlan } from "@/lib/draft-plan";
 import { BROWSER_UA } from "@/lib/http";
 import { unsafeResolvedFetchReason } from "@/lib/ssrf";
 
@@ -167,33 +166,14 @@ export async function decodeAd(adId: string): Promise<ActionResult> {
   return r;
 }
 
-/** Rebuild: generate original copy in the same angle (hooks / ugc_script). */
-export async function generateCopy(
-  adId: string,
-  generationType: "hooks" | "ugc_script" = "hooks"
-): Promise<ActionResult> {
-  return callRoute("/api/spy/generate", { ad_id: adId, generation_type: generationType });
-}
-
-/** Rebuild: generate an on-brand still and persist it to ad_creatives. */
-export async function generateImage(adId: string): Promise<ActionResult> {
-  const r = await callRoute("/api/spy/generate-image", { ad_id: adId });
-  if (r.ok) {
-    revalidatePath("/rebuild");
-    revalidatePath("/publish");
-  }
-  return r;
-}
-
 type Hook = { hook?: string; bridge?: string; cta?: string };
 
 /**
- * Rebuild — the real loop. The /api/spy/generate + /generate-image routes only
- * RETURN data (they don't persist), so this action generates copy + a still,
- * then writes ad_creatives rows itself. That's what makes Rebuild output show up
- * in Rebuild's grid and the Publish queue.
+ * Internal engine for recreate(): the /api/spy/generate + /generate-image routes
+ * only RETURN data (they don't persist), so this helper generates copy + a still,
+ * then writes ad_creatives rows itself.
  */
-export async function generateCreatives(
+async function generateCreatives(
   adId: string,
   brandSlug: string | null,
   variants = 3
@@ -380,80 +360,6 @@ export async function decodeUrl(url: string): Promise<ActionResult> {
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Decode failed" };
   }
-}
-
-/**
- * Rebuild from a SCRATCH brief (standalone — no Source ad needed). Claude writes
- * N hooks from the brief, persisted to ad_creatives so they flow to Publish.
- */
-export async function generateFromBrief(input: {
-  brief: string;
-  brandSlug?: string | null;
-  variants?: number;
-}): Promise<ActionResult> {
-  const brief = (input.brief || "").trim();
-  if (!brief) return { ok: false, error: "Write a brief first" };
-  const variants = Math.max(1, Math.min(6, input.variants ?? 3));
-  try {
-    const sb = getServiceClient();
-    let voice = "";
-    if (input.brandSlug) {
-      const { data } = await sb.from("brands").select("brand_voice").eq("slug", input.brandSlug).single();
-      voice = (data as { brand_voice?: string } | null)?.brand_voice || "";
-    }
-    // Ground the copy in proven winners from the library.
-    const exemplars = await getWinnerExemplars(brief);
-    const anthropic = new Anthropic();
-    const msg = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      system:
-        "You are a direct-response copywriter. Return JSON only. No banned CTAs (Get Started/Sign Up/Learn More), no therapeutic or guaranteed-outcome claims. If proven winning examples are provided, emulate their hook style and emotional triggers while staying original.",
-      messages: [
-        {
-          role: "user",
-          content: `From this brief, write ${variants} original ad hook variations.${
-            voice ? ` Brand voice: ${voice}.` : ""
-          }${
-            exemplars
-              ? `\n\nMODEL THESE PROVEN WINNERS from our library — match their hook style and triggers, adapt to the brief, do NOT copy verbatim:\n${exemplars}`
-              : ""
-          }\nBRIEF: ${brief}\nReturn JSON: {"hooks":[{"hook":"5-10 words","bridge":"one connecting sentence","cta":"3-5 words, outcome-framed"}]}`,
-        },
-      ],
-    });
-    const raw = msg.content[0]?.type === "text" ? msg.content[0].text.trim() : "{}";
-    const hooks = ((parseJson(raw).hooks as { hook?: string; bridge?: string; cta?: string }[]) || []).slice(
-      0,
-      variants
-    );
-    if (hooks.length === 0) return { ok: false, error: "No hooks generated" };
-    const rows = hooks.map((h) => ({
-      brand_slug: input.brandSlug ?? null,
-      hook_type: "scratch",
-      hook_text: h.hook ?? "(untitled)",
-      bridge_text: h.bridge ?? null,
-      cta_text: h.cta ?? null,
-      all_hooks: hooks,
-      platform: "meta",
-      creative_type: "scratch",
-      video_status: "none",
-    }));
-    const { error } = await sb.from("ad_creatives").insert(rows);
-    if (error) return { ok: false, error: error.message };
-    revalidatePath("/rebuild");
-    revalidatePath("/publish");
-    return { ok: true, data: { created: rows.length } };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Generation failed" };
-  }
-}
-
-/** Decode: synthesize the intelligence brief for a search. */
-export async function synthesizeBrief(searchId: string): Promise<ActionResult> {
-  const r = await callRoute("/api/spy/synthesize", { search_id: searchId });
-  if (r.ok) revalidatePath("/decode");
-  return r;
 }
 
 /**
@@ -836,250 +742,6 @@ export async function createStoryboard(input: {
   }
 }
 
-/** Upload a reference image to storage; returns its public URL for kie to fetch. */
-export async function uploadReference(
-  formData: FormData
-): Promise<{ ok: boolean; url?: string; error?: string }> {
-  try {
-    const file = formData.get("file");
-    if (!(file instanceof File)) return { ok: false, error: "No file provided" };
-    if (file.size > 50 * 1024 * 1024) return { ok: false, error: "File too large (max 50MB)" };
-    const type = file.type || "image/png";
-    const ext = (type.split("/")[1] || "png").replace("jpeg", "jpg");
-    const path = `${crypto.randomUUID()}.${ext}`;
-    const buf = Buffer.from(await file.arrayBuffer());
-    const sb = getServiceClient();
-    const { error } = await sb.storage
-      .from("ad-references")
-      .upload(path, buf, { contentType: type, upsert: false });
-    if (error) return { ok: false, error: error.message };
-    const { data } = sb.storage.from("ad-references").getPublicUrl(path);
-    return { ok: true, url: data.publicUrl };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Upload failed" };
-  }
-}
-
-/**
- * Replicate-from-reference: a reference image (+ optional guide images) and an
- * instruction prompt → N image-to-video variations via kie. Each variant is an
- * ad_creatives row that renders live in the Studio (reference shown as the still
- * until its video lands).
- */
-export async function replicate(input: {
-  referenceUrls: string[];
-  prompt: string;
-  provider?: string;
-  count?: number;
-  /** "merge" (default): all images guide ONE recreation, rendered `count` times.
-   *  "perImage": each image becomes its own standalone clip (N images → N clips). */
-  mode?: "merge" | "perImage";
-}): Promise<ActionResult> {
-  const provider = input.provider ?? "seedance";
-  if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
-  const refs = (input.referenceUrls || []).filter(Boolean);
-  if (refs.length === 0) return { ok: false, error: "A reference image is required" };
-  const prompt = (input.prompt || "").trim();
-  if (!prompt) return { ok: false, error: "An instruction prompt is required" };
-  const count = Math.max(1, Math.min(6, input.count ?? 3));
-  const mode = input.mode === "perImage" ? "perImage" : "merge";
-
-  // perImage: one job per image (each seeds its own clip). merge: `count` jobs,
-  // each seeded by the hero image + all others as guides.
-  const jobs =
-    mode === "perImage"
-      ? refs.map((r) => ({ image: r, guides: [r] }))
-      : Array.from({ length: count }, () => ({ image: refs[0], guides: refs }));
-
-  try {
-    const sb = getServiceClient();
-    let created = 0;
-    let lastErr: string | null = null;
-    for (const job of jobs) {
-      const { data: row } = await sb
-        .from("ad_creatives")
-        .insert({
-          hook_text: prompt.slice(0, 200),
-          image_prompt: prompt,
-          image_url: job.image,
-          hook_type: "replicate",
-          platform: "meta",
-          creative_type: "replicate",
-          video_status: "rendering",
-          video_provider: provider,
-        })
-        .select("id")
-        .single();
-      const id = (row as { id: string } | null)?.id;
-      if (!id) continue;
-      try {
-        const { taskId } = await submitKieVideo({
-          provider,
-          prompt,
-          mode: "image-to-video",
-          referenceImageUrls: job.guides,
-          duration: 9,
-        });
-        await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);
-        created++;
-      } catch (e) {
-        lastErr = e instanceof Error ? e.message : "submit failed";
-        await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", id);
-      }
-    }
-    revalidatePath("/publish");
-    // Surface the real reason (e.g. "Credits insufficient…") instead of a generic message.
-    if (created === 0) return { ok: false, error: lastErr ? `Video render failed — ${lastErr}` : "All variants failed to submit" };
-    return { ok: true, data: { created } };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Replicate failed" };
-  }
-}
-
-/**
- * Cheap Draft render (Remotion + FFmpeg, no KIE): turn an existing creative's
- * copy + image into a 9:16 MP4 for cents. Delegates to the /api/renders/draft
- * route (machine-auth), which renders + persists + flips the row to ready.
- */
-export async function generateDraftVideo(creativeId: string): Promise<ActionResult> {
-  const r = await callRoute("/api/renders/draft", { creativeId });
-  if (r.ok) revalidatePath("/publish");
-  return r;
-}
-
-/**
- * Draft from a brief (Video ▸ Draft tab): build copy from the brief and render
- * N cheap Remotion drafts. Each variant is its own draft creative. Renders are
- * sequential (each ~10s) — keep the variant count small.
- */
-export async function generateDraftFromBrief(input: {
-  brief: string;
-  image?: string | null;
-  variants?: number;
-}): Promise<ActionResult> {
-  const brief = (input.brief || "").trim();
-  if (!brief) return { ok: false, error: "Write a brief first" };
-  const variants = Math.max(1, Math.min(3, input.variants ?? 1));
-
-  let created = 0;
-  let lastErr: string | null = null;
-  for (let i = 0; i < variants; i++) {
-    const r = await callRoute("/api/renders/draft", { brief, image: input.image ?? null });
-    if (r.ok) created++;
-    else lastErr = r.error || "Draft render failed";
-  }
-  if (created === 0) return { ok: false, error: lastErr || "All drafts failed" };
-  revalidatePath("/publish");
-  return { ok: true, data: { created } };
-}
-
-/**
- * Step 1 of the two-step Draft flow: build the scene recipe (Sonnet) WITHOUT
- * rendering, so the user can review per-scene cost + edit before spending.
- * Returns the DraftRenderPlan as data.
- */
-export async function buildDraftRecipe(input: {
-  brief: string;
-  image?: string | null;
-}): Promise<ActionResult> {
-  const brief = (input.brief || "").trim();
-  if (!brief) return { ok: false, error: "Write a brief first" };
-  try {
-    const plan = await buildDraftPlan({ brief, image: input.image });
-    return { ok: true, data: plan };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to build recipe" };
-  }
-}
-
-/** Step 2: render a (possibly edited) recipe to a cheap draft video. */
-export async function renderDraftFromPlan(plan: DraftRenderPlan): Promise<ActionResult> {
-  if (!plan || !Array.isArray(plan.scenes) || plan.scenes.length === 0) {
-    return { ok: false, error: "Empty recipe" };
-  }
-  const r = await callRoute("/api/renders/draft", { plan });
-  if (r.ok) revalidatePath("/publish");
-  return r;
-}
-
-// Default cinematic model + per-scene cost estimate (cents) shown before spending.
-const CINEMATIC_PROVIDER = "kling";
-const CINEMATIC_SCENE_CENTS = 100;
-
-/**
- * Step 1 of the Cinematic upgrade (READ-ONLY, spends nothing): take a finished
- * draft's saved scene recipe and propose the cinematic version — every scene
- * flipped to AI, image-to-video seeded from that scene's tested look
- * (source image, else the captionless seed still captured at draft time). The
- * UI shows this in the editable Scene Recipe so the user can tweak + see cost,
- * then confirms via upgradeToCinematic.
- */
-export async function buildCinematicRecipe(creativeId: string): Promise<ActionResult> {
-  if (!creativeId) return { ok: false, error: "creativeId required" };
-  try {
-    const sb = getServiceClient();
-    const { data } = await sb
-      .from("ad_creatives")
-      .select("render_plan_json, render_mode")
-      .eq("id", creativeId)
-      .single();
-    const row = data as { render_plan_json?: DraftRenderPlan | null; render_mode?: string | null } | null;
-    const plan = row?.render_plan_json;
-    if (!plan || !Array.isArray(plan.scenes) || plan.scenes.length === 0) {
-      return { ok: false, error: "This creative has no editable recipe to upgrade." };
-    }
-    const scenes = plan.scenes.map((s) => {
-      // Fold the tested look into `image` so the existing i2v submit path seeds from it.
-      // Prefer the captionless frame captured from the draft (exact tested crop —
-      // "frame-for-frame"); fall back to the raw source image for older drafts.
-      const seed = s.seedFrameUrl ?? s.image;
-      return {
-        ...s,
-        renderMethod: "ai_motion" as const,
-        image: seed,
-        aiProvider: CINEMATIC_PROVIDER,
-        estimatedCostCents: CINEMATIC_SCENE_CENTS,
-      };
-    });
-    const cinematic: DraftRenderPlan = {
-      ...plan,
-      scenes,
-      estimatedCostCents: scenes.reduce((sum, s) => sum + (s.estimatedCostCents ?? CINEMATIC_SCENE_CENTS), 0),
-      sourceCreativeId: creativeId,
-    };
-    return { ok: true, data: { plan: cinematic, provider: CINEMATIC_PROVIDER } };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to build cinematic recipe" };
-  }
-}
-
-/**
- * Step 2 of the Cinematic upgrade: render the user's reviewed/edited cinematic
- * recipe. Creates a NEW render_mode='cinematic' creative (the cheap draft is
- * preserved); each AI scene renders via KIE and composites into one video via
- * the existing Motion pipeline. Spends AI credits — only called on explicit confirm.
- */
-export async function upgradeToCinematic(
-  creativeId: string,
-  plan: DraftRenderPlan,
-  provider?: string,
-): Promise<ActionResult> {
-  if (!creativeId) return { ok: false, error: "creativeId required" };
-  if (!plan || !Array.isArray(plan.scenes) || plan.scenes.length === 0) {
-    return { ok: false, error: "Empty recipe" };
-  }
-  const prov = provider && isVideoProvider(provider) ? provider : CINEMATIC_PROVIDER;
-  const finalPlan: DraftRenderPlan = { ...plan, sourceCreativeId: creativeId };
-  const r = await callRoute("/api/renders/draft", {
-    plan: finalPlan,
-    mode: "cinematic",
-    provider: prov,
-    sourceCreativeId: creativeId,
-  });
-  if (r.ok) revalidatePath("/publish");
-  return r;
-}
-
 /**
  * Story from existing clips (Stories ▸ Assemble): stitch already-rendered clips
  * (draft or cinematic `video_url`s, in the given order) into one Story via the
@@ -1128,45 +790,6 @@ export async function stitchClips(input: { clipUrls: string[]; title?: string })
     }
     revalidatePath("/publish");
     return { ok: true, data: { storyboard_id: storyboardId } };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Stitch failed" };
-  }
-}
-
-/** Combine an "individual scenes" story into one video later — stitch its own
- *  finished scene clips in scene order (in place; no duplicate story). */
-export async function stitchStoryboard(id: string): Promise<ActionResult> {
-  if (!id) return { ok: false, error: "id required" };
-  const worker = process.env.STITCH_WORKER_URL;
-  if (!worker) return { ok: false, error: "Stitch worker not configured" };
-  try {
-    const sb = getServiceClient();
-    const { data: scenes } = await sb
-      .from("ad_creatives")
-      .select("video_url")
-      .eq("storyboard_id", id)
-      .not("video_url", "is", null)
-      .order("scene_index", { ascending: true });
-    const urls = ((scenes as { video_url: string }[] | null) || []).map((s) => s.video_url).filter(Boolean);
-    if (urls.length < 2) return { ok: false, error: "Need at least 2 finished scenes to stitch" };
-
-    await sb.from("storyboards").update({ status: "stitching", final_status: "stitching" }).eq("id", id);
-    const res = await fetch(`${worker.replace(/\/$/, "")}/stitch`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        storyboard_id: id,
-        clip_urls: urls,
-        callback_url: `${await baseUrl()}/api/storyboards/stitch-callback`,
-      }),
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      await sb.from("storyboards").update({ status: "ready", final_status: "none" }).eq("id", id);
-      return { ok: false, error: `Stitch worker HTTP ${res.status}` };
-    }
-    revalidatePath("/publish");
-    return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Stitch failed" };
   }
