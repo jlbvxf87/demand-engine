@@ -608,6 +608,33 @@ export async function pollVideoJobs(): Promise<ActionResult> {
 }
 
 /**
+ * Upload a reference image to Supabase storage and return its public URL.
+ * Powers the Create page's image-to-video uploads (image N seeds scene N).
+ */
+export async function uploadReference(
+  formData: FormData
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+  try {
+    const file = formData.get("file");
+    if (!(file instanceof File)) return { ok: false, error: "No file provided" };
+    if (file.size > 50 * 1024 * 1024) return { ok: false, error: "File too large (max 50MB)" };
+    const type = file.type || "image/png";
+    const ext = (type.split("/")[1] || "png").replace("jpeg", "jpg");
+    const path = `${crypto.randomUUID()}.${ext}`;
+    const buf = Buffer.from(await file.arrayBuffer());
+    const sb = getServiceClient();
+    const { error } = await sb.storage
+      .from("ad-references")
+      .upload(path, buf, { contentType: type, upsert: false });
+    if (error) return { ok: false, error: error.message };
+    const { data } = sb.storage.from("ad-references").getPublicUrl(path);
+    return { ok: true, url: data.publicUrl };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Upload failed" };
+  }
+}
+
+/**
  * Multi-scene storyboard: N reference images + a brief → Sonnet master script
  * → one Kie image-to-video clip per scene. Clips render live in the Studio; when
  * all finish, the poll loop hands them to the stitch worker for one final video.

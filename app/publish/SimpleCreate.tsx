@@ -20,6 +20,7 @@ import {
   X,
   Film,
   RefreshCw,
+  ImagePlus,
 } from "lucide-react";
 import { ScreenHeader, Badge, EmptyState } from "@/components/ui";
 import { posterFor } from "@/lib/format";
@@ -33,6 +34,7 @@ import {
   deleteCreative,
   deleteStoryboard,
   stitchClips,
+  uploadReference,
 } from "@/app/actions";
 import type { Creative, Storyboard } from "@/lib/data";
 
@@ -84,6 +86,8 @@ export default function SimpleCreate({
   const [script, setScript] = useState("");
   const [sceneCount, setSceneCount] = useState(1);
   const [model, setModel] = useState<VideoProvider>("kling");
+  const [images, setImages] = useState<string[]>([]); // image N seeds video N (i2v)
+  const [uploading, setUploading] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -111,6 +115,33 @@ export default function SimpleCreate({
     };
   }, [anyRendering, anyStitching, router]);
 
+  async function addImages(files: FileList | null) {
+    if (!files?.length) return;
+    setUploading(true);
+    setNote(null);
+    const urls: string[] = [];
+    for (const file of Array.from(files)) {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await uploadReference(fd);
+      if (r.ok && r.url) urls.push(r.url);
+      else setNote(r.error || "Image upload failed");
+    }
+    setUploading(false);
+    if (urls.length) {
+      setImages((prev) => {
+        const next = [...prev, ...urls].slice(0, SCENE_CHOICES[SCENE_CHOICES.length - 1]);
+        // Each image seeds one video — keep the count at least as big.
+        setSceneCount((c) => Math.max(c, next.length));
+        return next;
+      });
+    }
+  }
+
+  function removeImage(i: number) {
+    setImages((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
   function generate() {
     const prompt = script.trim();
     if (!prompt) {
@@ -130,12 +161,15 @@ export default function SimpleCreate({
         prompt,
         provider: model,
         durationPerClip,
+        // Image N seeds video N (image-to-video); scenes without an image are text-to-video.
+        imageUrls: images,
         scenes: lines.map((voiceover) => ({ voiceover, shot_type: "talking_head" as const })),
         autoStitch: false, // clips land individually in the grid; stitch by hand below
       });
       if (!r.ok) setNote(r.error || "Generation failed");
       else {
         setScript("");
+        setImages([]);
         router.refresh();
       }
     });
@@ -235,7 +269,54 @@ export default function SimpleCreate({
           placeholder="Write your script — it's spoken word-for-word, no AI rewriting. Multiple videos? Separate scenes with blank lines (or sentences are split evenly across them)."
           className="w-full resize-y rounded-xl border border-[var(--color-line)] bg-transparent p-3 text-[14px] outline-none"
         />
+        {/* Reference images — image N seeds video N (image-to-video). */}
+        {images.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {images.map((url, i) => (
+              <div key={url} className="relative">
+                <div className="relative aspect-[9/16] w-16 overflow-hidden rounded-lg border border-[var(--color-line)] bg-black">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={`Scene ${i + 1}`} className="h-full w-full object-cover" />
+                  <span
+                    className="absolute left-1 top-1 grid h-4 w-4 place-items-center rounded-full text-[9px] font-extrabold text-white"
+                    style={{ background: ACCENT }}
+                  >
+                    {i + 1}
+                  </span>
+                  <button
+                    onClick={() => removeImage(i)}
+                    title="Remove image"
+                    className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-black/70 text-white"
+                  >
+                    <X size={9} />
+                  </button>
+                </div>
+                <p className="mt-0.5 text-center text-[9.5px] font-bold text-[var(--color-ink-muted)]">
+                  Video {i + 1}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-3">
+          <label
+            className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-[var(--color-line)] px-3 py-2 text-[13px] font-semibold text-[var(--color-ink-muted)]"
+            title="Upload images — image 1 seeds video 1, image 2 seeds video 2, and so on. Scenes without an image are generated from text alone."
+          >
+            {uploading ? <Loader2 size={15} className="animate-spin" /> : <ImagePlus size={15} />}
+            {uploading ? "Uploading…" : images.length ? "Add image" : "Add images (i2v)"}
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => {
+                void addImages(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
           <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[13px]">
             <Clapperboard size={15} className="text-[var(--color-ink-muted)]" />
             <span className="font-semibold text-[var(--color-ink-muted)]">Videos</span>
