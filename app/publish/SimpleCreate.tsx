@@ -89,6 +89,7 @@ export default function SimpleCreate({
   const [model, setModel] = useState<VideoProvider>("kling");
   const [images, setImages] = useState<string[]>([]); // image N seeds video N (i2v)
   const [uploading, setUploading] = useState(false);
+  const [lightbox, setLightbox] = useState<{ url: string; caption?: string | null } | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -100,6 +101,16 @@ export default function SimpleCreate({
   );
   const finished = creatives.filter((c) => c.video_url && !isRendering(c));
   const stitched = storyboards.filter((s) => s.final_video_url);
+
+  // Esc closes the fullscreen player.
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightbox(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
 
   // Poll KIE + refresh while anything is in flight.
   useEffect(() => {
@@ -408,6 +419,9 @@ export default function SimpleCreate({
               c={c}
               selected={selected.includes(c.id)}
               busy={busyId === c.id}
+              onOpen={() =>
+                c.video_url && setLightbox({ url: c.video_url, caption: c.hook_text })
+              }
               onToggle={() => toggle(c.id)}
               onRetry={() => retry(c.id)}
               onDelete={() => del(c.id)}
@@ -431,14 +445,20 @@ export default function SimpleCreate({
                 key={s.id}
                 className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5"
               >
-                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                <video
-                  src={s.final_video_url as string}
-                  poster={posterFor(s.final_video_url)}
-                  controls
-                  playsInline
-                  className="max-h-[260px] w-auto rounded-xl bg-black"
-                />
+                <button
+                  onClick={() => setLightbox({ url: s.final_video_url as string, caption: s.prompt })}
+                  title="Click to play"
+                  className="block"
+                >
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video
+                    src={s.final_video_url as string}
+                    poster={posterFor(s.final_video_url)}
+                    playsInline
+                    preload="metadata"
+                    className="pointer-events-none max-h-[260px] w-auto rounded-xl bg-black"
+                  />
+                </button>
                 <div className="mt-2 flex items-center gap-1.5">
                   <a
                     href={withDownload(s.final_video_url as string, `stitched-${s.id.slice(0, 6)}.mp4`)}
@@ -460,6 +480,48 @@ export default function SimpleCreate({
           </div>
         </div>
       )}
+
+      {/* ── Fullscreen player ───────────────────────────────────────────── */}
+      {lightbox && (
+        <div
+          onClick={() => setLightbox(null)}
+          className="fixed inset-0 z-50 grid place-items-center bg-black/85 p-4 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative flex max-h-full flex-col items-center gap-2"
+          >
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+            <video
+              src={lightbox.url}
+              poster={posterFor(lightbox.url)}
+              controls
+              autoPlay
+              playsInline
+              className="max-h-[82vh] w-auto rounded-xl bg-black shadow-2xl"
+            />
+            {lightbox.caption && (
+              <p className="max-w-[min(90vw,640px)] text-center text-[12.5px] text-white/80">
+                {lightbox.caption}
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              <a
+                href={withDownload(lightbox.url, "clip.mp4")}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white/12 px-3 py-1.5 text-[12.5px] font-semibold text-white"
+              >
+                <Download size={13} /> Download
+              </a>
+              <button
+                onClick={() => setLightbox(null)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white/12 px-3 py-1.5 text-[12.5px] font-semibold text-white"
+              >
+                <X size={13} /> Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -469,6 +531,7 @@ function ClipTile({
   c,
   selected,
   busy,
+  onOpen,
   onToggle,
   onRetry,
   onDelete,
@@ -476,6 +539,7 @@ function ClipTile({
   c: Creative;
   selected: boolean;
   busy: boolean;
+  onOpen: () => void;
   onToggle: () => void;
   onRetry: () => void;
   onDelete: () => void;
@@ -495,21 +559,29 @@ function ClipTile({
     >
       <div className="relative aspect-[9/16] w-full">
         {c.video_url ? (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
-          <video
-            src={`${c.video_url}#t=0.1`}
-            poster={posterFor(c.video_url)}
-            muted
-            playsInline
-            preload="metadata"
-            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
-            onMouseLeave={(e) => {
-              e.currentTarget.pause();
-              e.currentTarget.currentTime = 0;
-            }}
-            onClick={onToggle}
-            className="h-full w-full cursor-pointer object-cover"
-          />
+          // Click anywhere on the frame → fullscreen player. Hover silently
+          // previews; the pointer leaves and it resets.
+          <button onClick={onOpen} className="group block h-full w-full" title="Click to play">
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+            <video
+              src={`${c.video_url}#t=0.1`}
+              poster={posterFor(c.video_url)}
+              muted
+              playsInline
+              preload="metadata"
+              onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+              onMouseLeave={(e) => {
+                e.currentTarget.pause();
+                e.currentTarget.currentTime = 0;
+              }}
+              className="pointer-events-none h-full w-full object-cover"
+            />
+            <span className="absolute inset-0 grid place-items-center opacity-0 transition-opacity group-hover:opacity-100">
+              <span className="grid h-11 w-11 place-items-center rounded-full bg-black/60 backdrop-blur-sm">
+                <Play size={18} className="translate-x-[1px] fill-white text-white" />
+              </span>
+            </span>
+          </button>
         ) : c.image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={c.image_url} alt="" className="h-full w-full object-cover opacity-70" />
