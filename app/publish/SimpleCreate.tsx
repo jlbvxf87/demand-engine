@@ -21,11 +21,13 @@ import {
   Film,
   RefreshCw,
   ImagePlus,
+  Timer,
 } from "lucide-react";
 import { ScreenHeader, Badge, EmptyState } from "@/components/ui";
 import { posterFor } from "@/lib/format";
 import { withDownload } from "@/lib/download";
 import { splitScriptVerbatim } from "@/lib/split-script";
+import { fitDuration } from "@/lib/duration";
 import { compressImage } from "@/lib/compress-image";
 import { VIDEO_PROVIDERS, PROVIDER_DURATIONS, providerLabel, type VideoProvider } from "@/lib/video";
 import {
@@ -87,6 +89,7 @@ export default function SimpleCreate({
   const [script, setScript] = useState("");
   const [sceneCount, setSceneCount] = useState(1);
   const [model, setModel] = useState<VideoProvider>("kling");
+  const [duration, setDuration] = useState<"auto" | number>("auto");
   const [images, setImages] = useState<string[]>([]); // image N seeds video N (i2v)
   const [uploading, setUploading] = useState(false);
   const [lightbox, setLightbox] = useState<{ url: string; caption?: string | null } | null>(null);
@@ -101,6 +104,12 @@ export default function SimpleCreate({
   );
   const finished = creatives.filter((c) => c.video_url && !isRendering(c));
   const stitched = storyboards.filter((s) => s.final_video_url);
+
+  // Live preview of exactly what Generate will submit — no spend, no surprises.
+  const plannedLines = script.trim() ? splitScriptVerbatim(script, sceneCount) : [];
+  const plannedDurations = plannedLines.map((l) =>
+    duration === "auto" ? fitDuration(l, PROVIDER_DURATIONS[model] ?? [10]) : duration
+  );
 
   // Esc closes the fullscreen player.
   useEffect(() => {
@@ -169,17 +178,20 @@ export default function SimpleCreate({
       // VERBATIM: split the script ourselves and pass exact lines — the backend
       // skips its AI rewrite entirely and the model speaks precisely these words.
       const lines = splitScriptVerbatim(prompt, sceneCount);
-      // Pick the longest duration the model offers so speech isn't cut off
-      // (~2.5 words/sec is typical delivery; longer lines need the max anyway).
-      const durations = PROVIDER_DURATIONS[model] ?? [10];
-      const durationPerClip = durations[durations.length - 1];
+      const allowed = PROVIDER_DURATIONS[model] ?? [10];
       const r = await createStoryboard({
         prompt,
         provider: model,
-        durationPerClip,
+        durationPerClip: duration === "auto" ? allowed[allowed.length - 1] : duration,
         // Image N seeds video N (image-to-video); scenes without an image are text-to-video.
         imageUrls: images,
-        scenes: lines.map((voiceover) => ({ voiceover, shot_type: "talking_head" as const })),
+        scenes: lines.map((voiceover) => ({
+          voiceover,
+          shot_type: "talking_head" as const,
+          // Auto: size each clip to its own line — cheapest length that still
+          // finishes the sentence. Fixed: same length for every clip.
+          duration: duration === "auto" ? fitDuration(voiceover, allowed) : duration,
+        })),
         autoStitch: false, // clips land individually in the grid; stitch by hand below
       });
       if (!r.ok) setNote(r.error || "Generation failed");
@@ -353,12 +365,41 @@ export default function SimpleCreate({
             <span className="font-semibold text-[var(--color-ink-muted)]">Model</span>
             <select
               value={model}
-              onChange={(e) => setModel(e.target.value as VideoProvider)}
+              onChange={(e) => {
+                const next = e.target.value as VideoProvider;
+                setModel(next);
+                // Each model allows a different set of lengths — drop a fixed
+                // value the new model can't honor back to Auto.
+                setDuration((d) =>
+                  d === "auto" || (PROVIDER_DURATIONS[next] ?? []).includes(d) ? d : "auto"
+                );
+              }}
               className="bg-transparent text-[13px] font-bold outline-none"
             >
               {VIDEO_PROVIDERS.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label
+            className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[13px]"
+            title="Auto sizes each clip to its own line — the cheapest length that still finishes the sentence."
+          >
+            <Timer size={15} className="text-[var(--color-ink-muted)]" />
+            <span className="font-semibold text-[var(--color-ink-muted)]">Length</span>
+            <select
+              value={String(duration)}
+              onChange={(e) =>
+                setDuration(e.target.value === "auto" ? "auto" : Number(e.target.value))
+              }
+              className="bg-transparent text-[13px] font-bold outline-none"
+            >
+              <option value="auto">Auto-fit</option>
+              {(PROVIDER_DURATIONS[model] ?? []).map((d) => (
+                <option key={d} value={d}>
+                  {d}s
                 </option>
               ))}
             </select>
@@ -374,6 +415,22 @@ export default function SimpleCreate({
           </button>
           {note && <span className="text-[12.5px] font-semibold text-[var(--color-danger)]">{note}</span>}
         </div>
+
+        {/* What each clip will actually be, before spending anything. */}
+        {plannedLines.length > 0 && (
+          <p className="mt-2 text-[11.5px] text-[var(--color-ink-muted)]">
+            {duration === "auto" ? "Auto-fit → " : "Fixed → "}
+            {plannedLines
+              .map((l, i) => `#${i + 1} ${plannedDurations[i]}s${images[i] ? " · i2v" : ""}`)
+              .join(" · ")}
+            {plannedLines.length !== sceneCount && (
+              <span className="text-[var(--color-warn)]">
+                {" "}
+                (script only splits into {plannedLines.length})
+              </span>
+            )}
+          </p>
+        )}
       </div>
 
       {/* ── 2 · Selection bar ───────────────────────────────────────────── */}

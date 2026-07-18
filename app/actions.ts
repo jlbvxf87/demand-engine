@@ -647,8 +647,16 @@ export async function createStoryboard(input: {
   sceneCount?: number; // used when no reference frames are uploaded (text-to-video scenes)
   /** false = generate individual downloadable scenes and DON'T auto-stitch (default true). */
   autoStitch?: boolean;
-  /** Verbatim per-scene script: skip Sonnet and use these exact lines/shots. One per scene. */
-  scenes?: { voiceover: string; shot_type?: "talking_head" | "broll"; scene_prompt?: string; onScreen?: string }[];
+  /** Verbatim per-scene script: skip Sonnet and use these exact lines/shots. One per scene.
+   *  `duration` (seconds) overrides durationPerClip for that scene — used by the
+   *  Create page's auto-fit, which sizes each clip to the line it must speak. */
+  scenes?: {
+    voiceover: string;
+    shot_type?: "talking_head" | "broll";
+    scene_prompt?: string;
+    onScreen?: string;
+    duration?: number;
+  }[];
 }): Promise<ActionResult> {
   const provider = input.provider ?? "kling";
   if (!isVideoProvider(provider)) return { ok: false, error: `Unknown model: ${provider}` };
@@ -683,7 +691,8 @@ export async function createStoryboard(input: {
             scene_prompt: (s.scene_prompt || "").trim(),
             scene_summary: (s.onScreen || s.voiceover).slice(0, 140),
             voiceover_lines: s.voiceover.trim(),
-            duration: durationPerClip,
+            // Per-scene auto-fit wins; otherwise the story-wide default.
+            duration: s.duration ?? durationPerClip,
             clip_role: "",
             shot_type: s.shot_type === "broll" ? "broll" : "talking_head",
           }))
