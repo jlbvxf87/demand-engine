@@ -4,13 +4,16 @@
 export type VideoProvider = "seedance" | "kling" | "sora" | "veo";
 export type VideoMode = "text-to-video" | "image-to-video";
 
-// Talking-head video models, ordered by native-voice reliability (Kling default).
-// Each renders a person speaking the copy in the MODEL'S OWN voice — no TTS.
+// Video engines. The MODEL is just which engine renders; talking-head-vs-silent
+// action and voice on/off are chosen by the Style picker on the Create screen —
+// so labels stay neutral (no "talking head") to avoid contradicting Style.
+// Note: Veo always emits audio (no sound toggle in its API), so "Action only"
+// still mutes reliably on Kling / Seedance / Sora, not Veo.
 export const VIDEO_PROVIDERS: { id: VideoProvider; label: string; maxDuration: number }[] = [
-  { id: "kling", label: "Kling 3.0 — talking head + voice", maxDuration: 15 },
-  { id: "veo", label: "Veo 3.1 — talking head + voice", maxDuration: 8 },
-  { id: "sora", label: "Sora 2 — talking head + voice", maxDuration: 15 },
-  { id: "seedance", label: "Seedance 2.0 — talking head, voice varies", maxDuration: 15 },
+  { id: "kling", label: "Kling 3.0", maxDuration: 15 },
+  { id: "veo", label: "Veo 3.1 (always has audio)", maxDuration: 8 },
+  { id: "sora", label: "Sora 2", maxDuration: 15 },
+  { id: "seedance", label: "Seedance 2.0", maxDuration: 15 },
 ];
 
 /** Allowed clip durations (seconds) per model — drives the duration picker. */
